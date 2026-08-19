@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <!-- Sfondo Bianco Arrotondato Material -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 100,0 L 412,0 A 100,100 0 0 1 512,100 L 512,412 A 100,100 0 0 1 412,512 L 100,512 A 100,100 0 0 1 0,412 L 0,100 A 100,100 0 0 1 100,0 Z" />
+
+    <!-- Cornice Cast Blu Google -->
+    <path
+        android:fillColor="#4285F4"
+        android:pathData="M160,160H352C368.57,160 382,173.43 382,190V322C382,338.57 368.57,352 352,352H280V322H352V190H160V226H130V190C130,173.43 143.43,160 160,160Z" />
+
+    <!-- Onde Cast Palette Google -->
+    <path
+        android:fillColor="#EA4335"
+        android:pathData="M130,256V286H175C175,268.54 161.46,256 144,256H130Z" />
+    <path
+        android:fillColor="#FBBC05"
+        android:pathData="M130,316V346H160C160,329.43 146.57,316 130,316Z" />
+    <path
+        android:fillColor="#34A853"
+        android:pathData="M210,322V352H240C240,335.43 226.57,322 210,322Z" />
+
+    <!-- Play/Cast Icona Centrale Grigio Google -->
+    <path
+        android:fillColor="#5F6368"
+        android:pathData="M220,230L310,271L220,312V230Z" />
+</vector>

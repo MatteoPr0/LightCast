@@ -12,12 +12,15 @@
     <application
         android:allowBackup="false"
         android:hardwareAccelerated="true"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
+        android:banner="@drawable/banner_tv"
         android:label="LightCast"
         android:theme="@style/Theme.LightCast.Fullscreen">
         <activity
             android:name=".MainActivity"
-            android:banner="@android:drawable/sym_def_app_icon"
+            android:banner="@drawable/banner_tv"
+            android:icon="@drawable/ic_launcher"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="true"
             android:launchMode="singleTask"

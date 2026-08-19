@@ -52,6 +52,53 @@ class LightCastServer(
                 uri == "/qrcode.min.js" -> {
                     serveAsset("qrcode.min.js", "application/javascript")
                 }
+                uri == "/dd.xml" || uri == "/ssdp/device-desc.xml" -> {
+                    val deviceName = android.os.Build.MODEL ?: "LightCast TV"
+                    val xml = """<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:dial-multicast:org:device:dial:1</deviceType>
+    <friendlyName>$deviceName</friendlyName>
+    <manufacturer>Google Inc.</manufacturer>
+    <modelName>LightCast Receiver</modelName>
+    <UDN>uuid:f3b4c10a-4a82-1e90-b8f0-41235b849201</UDN>
+    <serviceList>
+      <service>
+        <serviceType>urn:dial-multicast:org:service:dial:1</serviceType>
+        <serviceId>urn:dial-multicast:org:serviceId:dial</serviceId>
+        <controlURL>/apps</controlURL>
+        <eventSubURL></eventSubURL>
+        <SCPDURL></SCPDURL>
+      </service>
+    </serviceList>
+  </device>
+</root>"""
+                    val res = newFixedLengthResponse(Response.Status.OK, "application/xml", xml)
+                    res.addHeader("Application-URL", "http://${session.headers["host"] ?: "127.0.0.1:$serverPort"}/apps/")
+                    res
+                }
+                uri.startsWith("/apps/") -> {
+                    val appName = uri.removePrefix("/apps/")
+                    if (method == Method.GET) {
+                        val appXml = """<?xml version="1.0" encoding="UTF-8"?>
+<service xmlns="urn:dial-multicast:org:service:dial:1" dialVer="1.7">
+  <name>$appName</name>
+  <options allowStop="true"/>
+  <state>stopped</state>
+</service>"""
+                        newFixedLengthResponse(Response.Status.OK, "application/xml", appXml)
+                    } else if (method == Method.POST) {
+                        val res = newFixedLengthResponse(Response.Status.CREATED, "text/plain", "")
+                        res.addHeader("Location", "http://${session.headers["host"] ?: "127.0.0.1:$serverPort"}/apps/$appName/run")
+                        res
+                    } else {
+                        newFixedLengthResponse(Response.Status.OK, "text/plain", "OK")
+                    }
+                }
                 uri == "/api/status" && method == Method.GET -> {
                     val json = JSONObject().apply {
                         put("state", playbackState.state)
@@ -138,14 +185,13 @@ class LightCastServer(
                     newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404 Not Found")
                 }
             }
-
             addCorsHeaders(response)
             return response
         } catch (e: Exception) {
             Log.e("LightCastServer", "Error serving request $uri: ${e.message}", e)
-            val errResponse = newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Server Error: ${e.message}")
-            addCorsHeaders(errResponse)
-            return errResponse
+            val err = newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Internal Error: ${e.message}")
+            addCorsHeaders(err)
+            return err
         }
     }
 
@@ -154,51 +200,44 @@ class LightCastServer(
             val input: InputStream = context.assets.open(assetName)
             newChunkedResponse(Response.Status.OK, mimeType, input)
         } catch (e: Exception) {
-            newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Asset not found")
+            newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Asset not found: $assetName")
         }
     }
 
     private fun serveMediaFile(session: IHTTPSession, file: File): Response {
-        val rangeHeader = session.headers["range"]
+        val range = session.headers["range"]
         val fileLength = file.length()
-        val mimeType = when (file.extension.lowercase()) {
-            "mp4", "m4v" -> "video/mp4"
-            "webm" -> "video/webm"
-            "mkv" -> "video/x-matroska"
-            "mp3" -> "audio/mpeg"
-            "jpg", "jpeg" -> "image/jpeg"
-            "png" -> "image/png"
-            else -> "video/mp4"
+        val mime = when {
+            file.name.endsWith(".mp4", true) -> "video/mp4"
+            file.name.endsWith(".mkv", true) -> "video/matroska"
+            file.name.endsWith(".webm", true) -> "video/webm"
+            file.name.endsWith(".mp3", true) -> "audio/mpeg"
+            file.name.endsWith(".jpg", true) || file.name.endsWith(".jpeg", true) -> "image/jpeg"
+            file.name.endsWith(".png", true) -> "image/png"
+            else -> "application/octet-stream"
         }
 
-        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
-            var rangeFrom = 0L
-            var rangeTo = fileLength - 1
-            val rangeSpec = rangeHeader.removePrefix("bytes=")
-            val parts = rangeSpec.split("-")
-            if (parts.isNotEmpty() && parts[0].isNotEmpty()) {
-                rangeFrom = parts[0].toLongOrNull() ?: 0L
-            }
-            if (parts.size > 1 && parts[1].isNotEmpty()) {
-                rangeTo = parts[1].toLongOrNull() ?: (fileLength - 1)
-            }
-            if (rangeTo >= fileLength) rangeTo = fileLength - 1
-            val sendLength = rangeTo - rangeFrom + 1
+        if (range != null && range.startsWith("bytes=")) {
+            val ranges = range.substring("bytes=".length).split("-")
+            val start = ranges[0].toLongOrNull() ?: 0L
+            val end = if (ranges.size > 1 && ranges[1].isNotEmpty()) ranges[1].toLongOrNull() ?: (fileLength - 1) else (fileLength - 1)
+            val contentLength = end - start + 1
 
-            val fis = FileInputStream(file)
-            fis.skip(rangeFrom)
-
-            val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mimeType, fis, sendLength)
-            res.addHeader("Content-Range", "bytes $rangeFrom-$rangeTo/$fileLength")
-            res.addHeader("Content-Length", "$sendLength")
+            val fis = FileInputStream(file).apply { skip(start) }
+            val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, contentLength)
+            res.addHeader("Content-Range", "bytes $start-$end/$fileLength")
             res.addHeader("Accept-Ranges", "bytes")
-            return res
-        } else {
-            val res = newFixedLengthResponse(Response.Status.OK, mimeType, FileInputStream(file), fileLength)
-            res.addHeader("Content-Length", "$fileLength")
-            res.addHeader("Accept-Ranges", "bytes")
+            res.addHeader("Content-Length", contentLength.toString())
+            addCorsHeaders(res)
             return res
         }
+
+        val fis = FileInputStream(file)
+        val res = newFixedLengthResponse(Response.Status.OK, mime, fis, fileLength)
+        res.addHeader("Accept-Ranges", "bytes")
+        res.addHeader("Content-Length", fileLength.toString())
+        addCorsHeaders(res)
+        return res
     }
 
     private fun addCorsHeaders(response: Response) {

@@ -21,6 +21,7 @@ import androidx.media3.ui.PlayerView
 import com.lightcast.receiver.cast.CastMdnsServer
 import com.lightcast.receiver.cast.CastV2Server
 import com.lightcast.receiver.cast.EurekaServer
+import com.lightcast.receiver.dlna.DlnaServer
 import com.lightcast.receiver.player.LightCastPlayerManager
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -29,6 +30,7 @@ import java.net.URLEncoder
 class MainActivity : AppCompatActivity(),
     LightCastServer.ServerListener,
     CastV2Server.CastV2Listener,
+    DlnaServer.DlnaListener,
     LightCastPlayerManager.PlayerStateListener {
 
     private var webView: WebView? = null
@@ -41,6 +43,7 @@ class MainActivity : AppCompatActivity(),
     private var eurekaServer: EurekaServer? = null
     private var castV2Server: CastV2Server? = null
     private var castMdnsServer: CastMdnsServer? = null
+    private var dlnaServer: DlnaServer? = null
 
     private val httpPort = 8080
     private val eurekaPort = 8008
@@ -65,6 +68,7 @@ class MainActivity : AppCompatActivity(),
             startEurekaServer(deviceName)
             startCastV2Server(deviceName)
             startCastMdnsServer(deviceName)
+            startDlnaServer(deviceName)
             setupOptimizedWebView()
             setupExoPlayer()
 
@@ -126,6 +130,17 @@ class MainActivity : AppCompatActivity(),
             Log.d("MainActivity", "LightCast pure Kotlin mDNS Server started")
         } catch (e: Exception) {
             Log.e("MainActivity", "Failed to start mDNS server: ${e.message}", e)
+        }
+    }
+
+    private fun startDlnaServer(deviceName: String) {
+        try {
+            dlnaServer = DlnaServer(this, deviceName, this)
+            dlnaServer?.start()
+            httpServer?.dlnaServer = dlnaServer
+            Log.d("MainActivity", "LightCast DLNA MediaRenderer started")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to start DLNA server: ${e.message}", e)
         }
     }
 
@@ -359,6 +374,9 @@ class MainActivity : AppCompatActivity(),
     }
 
     override fun onDestroy() {
+        try {
+            dlnaServer?.stop()
+        } catch (_: Exception) {}
         try {
             castMdnsServer?.stop()
         } catch (_: Exception) {}

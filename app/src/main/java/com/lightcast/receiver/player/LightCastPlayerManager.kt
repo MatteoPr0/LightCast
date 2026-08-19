@@ -7,7 +7,6 @@ import android.os.Looper
 import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
@@ -57,17 +56,16 @@ class LightCastPlayerManager(
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 15_000,
-                /* maxBufferMs = */ 50_000,
-                /* bufferForPlaybackMs = */ 2_000,
-                /* bufferForPlaybackAfterRebufferMs = */ 4_000
+                /* minBufferMs = */ 10_000,
+                /* maxBufferMs = */ 60_000,
+                /* bufferForPlaybackMs = */ 1_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 2_000
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
         val trackSelector = DefaultTrackSelector(context)
 
-        // Custom DataSource with standard browser User-Agent to prevent 403 Forbidden on CDNs & Cloudflare
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
             .setAllowCrossProtocolRedirects(true)
@@ -122,7 +120,7 @@ class LightCastPlayerManager(
     fun play(url: String, title: String) {
         currentTitle = title
         val uri = Uri.parse(url)
-        val mediaItem = buildMediaItem(uri)
+        val mediaItem = MediaItem.fromUri(uri)
 
         exoPlayer?.apply {
             setMediaItem(mediaItem)
@@ -131,23 +129,6 @@ class LightCastPlayerManager(
         }
 
         emitStateUpdate("playing")
-    }
-
-    private fun buildMediaItem(uri: Uri): MediaItem {
-        val path = uri.path?.lowercase() ?: ""
-        val builder = MediaItem.Builder().setUri(uri)
-
-        when {
-            path.endsWith(".m3u8") -> builder.setMimeType(MimeTypes.APPLICATION_M3U8)
-            path.endsWith(".mpd") -> builder.setMimeType(MimeTypes.APPLICATION_MPD)
-            path.endsWith(".ism") || path.endsWith(".isml") -> builder.setMimeType(MimeTypes.APPLICATION_SS)
-            path.endsWith(".mp4") || path.endsWith(".m4v") -> builder.setMimeType(MimeTypes.VIDEO_MP4)
-            path.endsWith(".webm") -> builder.setMimeType(MimeTypes.VIDEO_WEBM)
-            path.endsWith(".mkv") -> builder.setMimeType(MimeTypes.VIDEO_MATROSKA)
-            path.endsWith(".mp3") -> builder.setMimeType(MimeTypes.AUDIO_MPEG)
-        }
-
-        return builder.build()
     }
 
     fun pause() {
@@ -190,6 +171,12 @@ class LightCastPlayerManager(
         emitStateUpdate("idle")
     }
 
+    fun release() {
+        stop()
+        exoPlayer?.release()
+        exoPlayer = null
+    }
+
     private fun startPeriodicSync() {
         if (isSyncRunning) return
         isSyncRunning = true
@@ -203,28 +190,23 @@ class LightCastPlayerManager(
 
     private val syncRunnable = object : Runnable {
         override fun run() {
-            if (isSyncRunning && isPlaying) {
-                emitStateUpdate("playing")
-                handler.postDelayed(this, 1000)
-            }
+            if (!isSyncRunning || exoPlayer == null) return
+            val player = exoPlayer ?: return
+            val state = if (player.isPlaying) "playing" else if (player.playbackState == Player.STATE_BUFFERING) "buffering" else "paused"
+            emitStateUpdate(state)
+            handler.postDelayed(this, 1000)
         }
     }
 
-    private fun emitStateUpdate(stateName: String) {
-        val state = PlaybackState(
-            state = stateName,
+    private fun emitStateUpdate(state: String) {
+        val playbackState = PlaybackState(
+            state = state,
             currentTime = currentPositionSec,
             duration = durationSec,
             title = currentTitle,
             volume = (exoPlayer?.volume ?: 1f).toDouble(),
-            isMuted = (exoPlayer?.volume == 0f)
+            isMuted = (exoPlayer?.volume ?: 1f) == 0f
         )
-        stateListener.onPlayerStateChanged(state)
-    }
-
-    fun release() {
-        stopPeriodicSync()
-        exoPlayer?.release()
-        exoPlayer = null
+        stateListener.onPlayerStateChanged(playbackState)
     }
 }

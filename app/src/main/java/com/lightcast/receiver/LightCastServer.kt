@@ -29,6 +29,7 @@ class LightCastServer(
     }
 
     var playbackState = PlaybackState()
+    var dlnaServer: com.lightcast.receiver.dlna.DlnaServer? = null
 
     private val mediaDir by lazy {
         File(context.cacheDir, "cast_media").apply { mkdirs() }
@@ -42,6 +43,13 @@ class LightCastServer(
             val res = newFixedLengthResponse(Response.Status.OK, "text/plain", "")
             addCorsHeaders(res)
             return res
+        }
+
+        if (uri.startsWith("/dlna/")) {
+            dlnaServer?.handleHttpRequest(uri, session)?.let {
+                addCorsHeaders(it)
+                return it
+            }
         }
 
         try {

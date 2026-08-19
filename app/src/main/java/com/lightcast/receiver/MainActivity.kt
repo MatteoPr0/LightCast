@@ -12,11 +12,13 @@ import android.view.View
 import android.view.WindowManager
 import android.webkit.*
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.ui.PlayerView
+import com.lightcast.receiver.cast.CastMdnsServer
 import com.lightcast.receiver.cast.CastV2Server
 import com.lightcast.receiver.player.LightCastPlayerManager
 import java.net.Inet4Address
@@ -36,6 +38,7 @@ class MainActivity : AppCompatActivity(),
     private var playerManager: LightCastPlayerManager? = null
     private var httpServer: LightCastServer? = null
     private var castV2Server: CastV2Server? = null
+    private var castMdnsServer: CastMdnsServer? = null
 
     private val httpPort = 8080
     private val castPort = 8009
@@ -57,6 +60,7 @@ class MainActivity : AppCompatActivity(),
 
             startHttpServer()
             startCastV2Server(deviceName)
+            startCastMdnsServer(deviceName)
             setupOptimizedWebView()
             setupExoPlayer()
 
@@ -98,6 +102,16 @@ class MainActivity : AppCompatActivity(),
             Log.d("MainActivity", "LightCast Cast V2 Server running on port $castPort")
         } catch (e: Exception) {
             Log.e("MainActivity", "Failed to start Cast V2 server: ${e.message}", e)
+        }
+    }
+
+    private fun startCastMdnsServer(deviceName: String) {
+        try {
+            castMdnsServer = CastMdnsServer(this, deviceName, castPort)
+            castMdnsServer?.start()
+            Log.d("MainActivity", "LightCast pure Kotlin mDNS Server started")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to start mDNS server: ${e.message}", e)
         }
     }
 
@@ -159,7 +173,11 @@ class MainActivity : AppCompatActivity(),
     override fun onCastMedia(url: String, title: String, type: String) {
         runOnUiThread {
             if (type.startsWith("image/")) {
-                stopPlaybackAndShowDashboard()
+                playerManager?.stop()
+                playerView?.visibility = View.GONE
+                playerTopOverlay?.visibility = View.GONE
+                webView?.visibility = View.VISIBLE
+
                 val safeUrl = url.replace("'", "\\'")
                 val safeTitle = title.replace("'", "\\'")
                 webView?.evaluateJavascript("window.playMedia('$safeUrl', '$safeTitle', '$type')", null)
@@ -225,7 +243,7 @@ class MainActivity : AppCompatActivity(),
     override fun onPlayerError(errorMessage: String) {
         runOnUiThread {
             Log.e("MainActivity", "Playback error: $errorMessage")
-            android.widget.Toast.makeText(this, "Errore stream: $errorMessage", android.widget.Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Errore stream: $errorMessage", Toast.LENGTH_LONG).show()
             stopPlaybackAndShowDashboard()
         }
     }
@@ -327,6 +345,9 @@ class MainActivity : AppCompatActivity(),
     }
 
     override fun onDestroy() {
+        try {
+            castMdnsServer?.stop()
+        } catch (_: Exception) {}
         try {
             castV2Server?.stop()
         } catch (_: Exception) {}

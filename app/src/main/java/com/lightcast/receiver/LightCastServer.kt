@@ -117,7 +117,19 @@ class LightCastServer(
                     val json = JSONObject(postData)
                     val url = json.optString("url", "")
                     val title = json.optString("title", "Cast Stream")
-                    val type = json.optString("type", "video/mp4")
+                    
+                    val lowerUrl = url.lowercase()
+                    val type = when {
+                        lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg") -> "image/jpeg"
+                        lowerUrl.endsWith(".png") -> "image/png"
+                        lowerUrl.endsWith(".gif") -> "image/gif"
+                        lowerUrl.endsWith(".webp") -> "image/webp"
+                        lowerUrl.endsWith(".m3u8") -> "application/x-mpegURL"
+                        lowerUrl.endsWith(".mpd") -> "application/dash+xml"
+                        lowerUrl.endsWith(".mkv") -> "video/matroska"
+                        lowerUrl.endsWith(".mp3") -> "audio/mpeg"
+                        else -> json.optString("type", "video/mp4")
+                    }
 
                     if (url.isNotEmpty()) {
                         playbackState.title = title
@@ -142,10 +154,28 @@ class LightCastServer(
                     session.parseBody(files)
                     
                     var savedFileName = ""
+                    var detectedMime = "video/mp4"
+
+                    val originalFileName = session.parms["mediaFile"] ?: "video.mp4"
+                    val ext = originalFileName.substringAfterLast('.', "mp4").lowercase()
+
+                    detectedMime = when (ext) {
+                        "jpg", "jpeg" -> "image/jpeg"
+                        "png" -> "image/png"
+                        "gif" -> "image/gif"
+                        "webp" -> "image/webp"
+                        "mkv" -> "video/matroska"
+                        "mp4", "m4v" -> "video/mp4"
+                        "webm" -> "video/webm"
+                        "mp3" -> "audio/mpeg"
+                        "flac" -> "audio/flac"
+                        else -> "video/mp4"
+                    }
+
                     for ((key, tempFilePath) in files) {
                         if (key == "mediaFile" || key.startsWith("mediaFile")) {
                             val tempFile = File(tempFilePath)
-                            val targetFile = File(mediaDir, "stream_${System.currentTimeMillis()}_${tempFile.name}")
+                            val targetFile = File(mediaDir, "media_${System.currentTimeMillis()}.$ext")
                             tempFile.copyTo(targetFile, overwrite = true)
                             savedFileName = targetFile.name
                             break
@@ -154,9 +184,10 @@ class LightCastServer(
 
                     if (savedFileName.isNotEmpty()) {
                         val localStreamUrl = "http://127.0.0.1:$serverPort/media/$savedFileName"
-                        playbackState.title = "File Locale"
+                        val displayTitle = originalFileName.substringBeforeLast('.')
+                        playbackState.title = displayTitle
                         playbackState.state = "playing"
-                        listener.onCastMedia(localStreamUrl, "File Locale", "video/mp4")
+                        listener.onCastMedia(localStreamUrl, displayTitle, detectedMime)
                         newFixedLengthResponse(Response.Status.OK, "application/json", """{"status":"ok","file":"$savedFileName"}""")
                     } else {
                         newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", """{"error":"No file uploaded"}""")
@@ -173,11 +204,18 @@ class LightCastServer(
                 }
                 uri == "/setup/eureka_info" -> {
                     val json = JSONObject().apply {
-                        put("name", "LightCast")
+                        put("name", "LightCast TV")
                         put("device_info", JSONObject().apply {
-                            put("manufacturer", "LightCast")
-                            put("model_name", "LightCast Receiver")
+                            put("manufacturer", "Google Inc.")
+                            put("model_name", "Eureka Dongle")
+                            put("cast_build_revision", "1.56.281627")
+                            put("ssdp_udn", "f3b4c10a-4a82-1e90-b8f0-41235b849201")
+                            put("mac_address", "FA:8F:CA:75:68:DE")
                         })
+                        put("net", JSONObject().apply {
+                            put("online", true)
+                        })
+                        put("version", 8)
                     }
                     newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
                 }
@@ -214,7 +252,9 @@ class LightCastServer(
             file.name.endsWith(".mp3", true) -> "audio/mpeg"
             file.name.endsWith(".jpg", true) || file.name.endsWith(".jpeg", true) -> "image/jpeg"
             file.name.endsWith(".png", true) -> "image/png"
-            else -> "application/octet-stream"
+            file.name.endsWith(".gif", true) -> "image/gif"
+            file.name.endsWith(".webp", true) -> "image/webp"
+            else -> "video/mp4"
         }
 
         if (range != null && range.startsWith("bytes=")) {

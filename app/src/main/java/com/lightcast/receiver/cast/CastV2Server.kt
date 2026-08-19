@@ -213,8 +213,26 @@ class CastV2Server(
                     }
                 }
 
+                "urn:x-cast:com.google.cast.setup" -> {
+                    if (type == "eureka_info") {
+                        sendEurekaInfo(
+                            destinationId = msg.sourceId,
+                            client = client,
+                            requestId = json.optInt("request_id", 0)
+                        )
+                    }
+                }
+
                 "urn:x-cast:com.google.cast.receiver" -> {
                     when (type) {
+                        "GET_APP_AVAILABILITY" -> {
+                            sendAppAvailability(
+                                destinationId = msg.sourceId,
+                                client = client,
+                                requestId = requestId,
+                                appIds = json.optJSONArray("appId")
+                            )
+                        }
                         "GET_STATUS" -> {
                             sendReceiverStatus(msg.sourceId, client, requestId)
                         }
@@ -417,6 +435,94 @@ class CastV2Server(
                 e
             )
         }
+    }
+
+    private fun sendAppAvailability(
+        destinationId: String,
+        client: ClientSession,
+        requestId: Int,
+        appIds: JSONArray?
+    ) {
+        val availability = JSONObject()
+
+        if (appIds != null) {
+            for (i in 0 until appIds.length()) {
+                val appId = appIds.optString(i, "")
+                if (appId.isNotEmpty()) {
+                    // LightCast accetta LAUNCH per gli appId richiesti dal sender.
+                    availability.put(appId, "APP_AVAILABLE")
+                }
+            }
+        }
+
+        val payload = JSONObject().apply {
+            put("responseType", "GET_APP_AVAILABILITY")
+            put("requestId", requestId)
+            put("availability", availability)
+        }
+
+        client.sendMessage(
+            CastMessage(
+                protocolVersion = 0,
+                sourceId = "receiver-0",
+                destinationId = destinationId,
+                namespace = "urn:x-cast:com.google.cast.receiver",
+                payloadType = 0,
+                payloadUtf8 = payload.toString()
+            )
+        )
+
+        Log.d(
+            "CastV2Server",
+            "TX GET_APP_AVAILABILITY requestId=$requestId availability=$availability"
+        )
+    }
+
+    private fun sendEurekaInfo(
+        destinationId: String,
+        client: ClientSession,
+        requestId: Int
+    ) {
+        val data = JSONObject().apply {
+            put("version", 12)
+            put("name", deviceName)
+
+            put("device_info", JSONObject().apply {
+                put("ssdp_udn", "uuid:f3b4c10a-4a82-1e90-b8f0-41235b849201")
+                put("manufacturer", "LightCast")
+                put("product_name", "LightCast TV")
+            })
+
+            put("build_info", JSONObject().apply {
+                put("build_type", 2)
+                put("cast_build_revision", "1.0")
+                put("system_build_number", "LightCast")
+            })
+        }
+
+        val payload = JSONObject().apply {
+            put("type", "eureka_info")
+            put("request_id", requestId)
+            put("response_code", 200)
+            put("response_string", "OK")
+            put("data", data)
+        }
+
+        client.sendMessage(
+            CastMessage(
+                protocolVersion = 0,
+                sourceId = "receiver-0",
+                destinationId = destinationId,
+                namespace = "urn:x-cast:com.google.cast.setup",
+                payloadType = 0,
+                payloadUtf8 = payload.toString()
+            )
+        )
+
+        Log.d(
+            "CastV2Server",
+            "TX eureka_info requestId=$requestId"
+        )
     }
 
     private fun sendReceiverStatus(destinationId: String, client: ClientSession, requestId: Int) {

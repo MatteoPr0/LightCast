@@ -128,9 +128,9 @@ class CastMdnsServer(
         dos.writeShort(0x0000) // Transaction ID
         dos.writeShort(0x8400) // Flags: Response + Authoritative
         dos.writeShort(0x0000) // Questions
-        dos.writeShort(0x0004) // Answers: 4 (PTR, SRV, TXT, A)
+        dos.writeShort(0x0001) // Answers: 1 (PTR Record)
         dos.writeShort(0x0000) // Authority
-        dos.writeShort(0x0000) // Additional
+        dos.writeShort(0x0003) // Additional: 3 (SRV, TXT, A Records)
 
         // 1. PTR Record: _googlecast._tcp.local -> instanceName
         writeDnsName(dos, serviceType)

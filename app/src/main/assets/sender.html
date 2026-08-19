@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>LightCast Remote Controller</title>
+  <style>
+    :root {
+      --bg: #0d0f17;
+      --card-bg: rgba(26, 31, 46, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --radius: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.15) 0px, transparent 50%);
+    }
+
+    .container {
+      width: 100%;
+      max-width: 460px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 4px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-icon {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 14px var(--accent-glow);
+    }
+
+    .logo-icon svg {
+      width: 22px;
+      height: 22px;
+      fill: white;
+    }
+
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .device-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      font-size: 0.75rem;
+      color: #34d399;
+      backdrop-filter: blur(12px);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #10b981;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 4px;
+      gap: 4px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 10px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      font-weight: 600;
+      border-radius: 9px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn.active {
+      background: var(--accent);
+      color: white;
+      box-shadow: 0 4px 12px var(--accent-glow);
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 20px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .input-field {
+      width: 100%;
+      padding: 12px 14px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .input-field:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .btn {
+      width: 100%;
+      padding: 13px;
+      background: linear-gradient(135deg, var(--accent), #4f46e5);
+      border: none;
+      border-radius: 11px;
+      color: white;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 4px 16px var(--accent-glow);
+      transition: all 0.2s ease;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-danger {
+      background: linear-gradient(135deg, var(--danger), #b91c1c);
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--card-border);
+      box-shadow: none;
+      color: var(--text);
+    }
+
+    /* Preset buttons */
+    .presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .preset-chip {
+      padding: 6px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .preset-chip:hover, .preset-chip:active {
+      background: var(--accent-glow);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    /* Remote Controller Card */
+    .now-playing {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .track-info {
+      text-align: center;
+    }
+
+    .track-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .track-status {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .seek-slider {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.15);
+      outline: none;
+    }
+
+    .seek-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      box-shadow: 0 0 8px var(--accent-glow);
+    }
+
+    .time-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .playback-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+
+    .ctrl-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--card-border);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .ctrl-btn.main {
+      width: 62px;
+      height: 62px;
+      background: var(--accent);
+      box-shadow: 0 4px 18px var(--accent-glow);
+    }
+
+    .ctrl-btn:active {
+      transform: scale(0.92);
+    }
+
+    .volume-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 12px;
+      margin-top: 8px;
+    }
+
+    .volume-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .volume-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: white;
+      cursor: pointer;
+    }
+
+    /* File drop / upload zone */
+    .file-drop {
+      border: 2px dashed var(--card-border);
+      border-radius: 12px;
+      padding: 28px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: rgba(15, 23, 42, 0.3);
+    }
+
+    .file-drop:active {
+      border-color: var(--accent);
+      background: rgba(99, 102, 241, 0.05);
+    }
+
+    .file-drop-icon {
+      font-size: 2.2rem;
+      margin-bottom: 8px;
+    }
+
+    .upload-progress {
+      display: none;
+      margin-top: 12px;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.15s linear;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24"><path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
+        </div>
+        <div>
+          <h1 class="brand-title">LightCast</h1>
+        </div>
+      </div>
+      <div class="device-badge">
+        <div class="status-dot"></div>
+        <span id="device-name-display">TV Connessa</span>
+      </div>
+    </div>
+
+    <!-- Tabs Navigation -->
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('url-tab')">🌐 Stream URL</button>
+      <button class="tab-btn" onclick="switchTab('file-tab')">📁 File Locale</button>
+      <button class="tab-btn" onclick="switchTab('remote-tab')">🎮 Telecomando</button>
+    </div>
+
+    <!-- Tab 1: Stream URL -->
+    <div id="url-tab" class="card tab-content">
+      <div class="form-group">
+        <label class="form-label">Indirizzo Streaming / Video</label>
+        <input type="url" id="stream-url" class="input-field" placeholder="https://.../video.mp4 o .m3u8" autocomplete="off" autocorrect="off">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Titolo (opzionale)</label>
+        <input type="text" id="stream-title" class="input-field" placeholder="Es. Big Buck Bunny">
+      </div>
+      <button class="btn" onclick="castUrl()">
+        <svg style="width:18px;height:18px;fill:currentColor" viewBox="0 0 24 24"><path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
+        Trasmetti su TV
+      </button>
+
+      <div class="presets">
+        <span class="preset-chip" onclick="setPreset('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', 'Big Buck Bunny (MP4)')">🐰 Big Buck Bunny</span>
+        <span class="preset-chip" onclick="setPreset('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', 'Elephants Dream (MP4)')">🐘 Elephants Dream</span>
+        <span class="preset-chip" onclick="setPreset('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8', 'Big Buck Bunny (HLS Stream)')">⚡ HLS Adaptive Stream</span>
+      </div>
+    </div>
+
+    <!-- Tab 2: Local File -->
+    <div id="file-tab" class="card tab-content hidden">
+      <input type="file" id="file-input" class="hidden" accept="video/*,audio/*,image/*" onchange="handleFileSelect(event)">
+      <div class="file-drop" onclick="document.getElementById('file-input').click()">
+        <div class="file-drop-icon">📤</div>
+        <div style="font-weight:600;margin-bottom:4px;">Seleziona un file dal telefono</div>
+        <div style="font-size:0.8rem;color:var(--text-muted);">Video MP4/WebM, Canzoni MP3, Foto</div>
+      </div>
+      <div id="upload-progress" class="upload-progress">
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-bottom:4px;">
+          <span id="upload-filename">Caricamento...</span>
+          <span id="upload-percent">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div id="progress-bar-fill" class="progress-bar-fill"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Remote Control -->
+    <div id="remote-tab" class="card tab-content hidden">
+      <div class="now-playing">
+        <div class="track-info">
+          <div id="rc-title" class="track-title">In attesa di trasmissione</div>
+          <div id="rc-status" class="track-status">Pronto per il Cast</div>
+        </div>
+
+        <div class="timeline">
+          <input type="range" id="seek-bar" class="seek-slider" min="0" max="100" value="0" oninput="onSeekInput(this.value)" onchange="onSeekChange(this.value)">
+          <div class="time-labels">
+            <span id="current-time">00:00</span>
+            <span id="total-duration">00:00</span>
+          </div>
+        </div>
+
+        <div class="playback-controls">
+          <button class="ctrl-btn" onclick="sendControl('seek', -10)" title="Indietro 10s">
+            <svg style="width:20px;height:20px;fill:currentColor" viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
+          </button>
+          <button id="play-pause-btn" class="ctrl-btn main" onclick="togglePlayPause()" title="Play / Pausa">
+            <svg id="play-icon" style="width:28px;height:28px;fill:currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <svg id="pause-icon" class="hidden" style="width:28px;height:28px;fill:currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+          </button>
+          <button class="ctrl-btn" onclick="sendControl('seek', 10)" title="Avanti 10s">
+            <svg style="width:20px;height:20px;fill:currentColor" viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>
+          </button>
+        </div>
+
+        <div class="volume-box">
+          <span style="font-size:1.1rem;cursor:pointer" onclick="toggleMute()">🔊</span>
+          <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="100" oninput="sendControl('volume', this.value / 100)">
+        </div>
+
+        <button class="btn btn-danger" style="margin-top:8px;" onclick="sendControl('stop')">
+          ⏹️ Interrompi e Torna a Dashboard
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let isUserSeeking = false;
+    let currentPlaybackState = "idle";
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById(tabId).classList.remove('hidden');
+      event.currentTarget.classList.add('active');
+    }
+
+    function setPreset(url, title) {
+      document.getElementById('stream-url').value = url;
+      document.getElementById('stream-title').value = title;
+    }
+
+    async function castUrl() {
+      const url = document.getElementById('stream-url').value.trim();
+      const title = document.getElementById('stream-title').value.trim() || 'Streaming Diretto';
+      if (!url) return alert('Inserisci un URL valido');
+
+      try {
+        const res = await fetch('/api/cast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, title })
+        });
+        if (res.ok) {
+          // Switch to Remote Control tab
+          document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+          document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+          document.getElementById('remote-tab').classList.remove('hidden');
+          document.querySelectorAll('.tab-btn')[2].classList.add('active');
+        }
+      } catch (err) {
+        alert('Errore di connessione alla TV: ' + err.message);
+      }
+    }
+
+    async function handleFileSelect(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const progressDiv = document.getElementById('upload-progress');
+      const filenameSpan = document.getElementById('upload-filename');
+      const percentSpan = document.getElementById('upload-percent');
+      const fillBar = document.getElementById('progress-bar-fill');
+
+      filenameSpan.textContent = file.name;
+      progressDiv.style.display = 'block';
+      percentSpan.textContent = '0%';
+      fillBar.style.width = '0%';
+
+      const formData = new FormData();
+      formData.append('mediaFile', file);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload', true);
+
+      xhr.upload.onprogress = function(evt) {
+        if (evt.lengthComputable) {
+          const percent = Math.round((evt.loaded / evt.total) * 100);
+          percentSpan.textContent = percent + '%';
+          fillBar.style.width = percent + '%';
+        }
+      };
+
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          setTimeout(() => {
+            progressDiv.style.display = 'none';
+            // Switch to remote
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById('remote-tab').classList.remove('hidden');
+            document.querySelectorAll('.tab-btn')[2].classList.add('active');
+          }, 600);
+        } else {
+          alert('Errore caricamento file: ' + xhr.statusText);
+          progressDiv.style.display = 'none';
+        }
+      };
+
+      xhr.onerror = function() {
+        alert('Errore di rete durante il caricamento');
+        progressDiv.style.display = 'none';
+      };
+
+      xhr.send(formData);
+    }
+
+    async function sendControl(action, value) {
+      try {
+        await fetch('/api/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, value })
+        });
+      } catch (e) {
+        console.error('Control error', e);
+      }
+    }
+
+    function togglePlayPause() {
+      if (currentPlaybackState === 'playing') {
+        sendControl('pause');
+      } else {
+        sendControl('play');
+      }
+    }
+
+    function onSeekInput(val) {
+      isUserSeeking = true;
+      document.getElementById('current-time').textContent = formatSeconds(val);
+    }
+
+    function onSeekChange(val) {
+      isUserSeeking = false;
+      sendControl('seekTo', parseFloat(val));
+    }
+
+    function formatSeconds(secs) {
+      if (isNaN(secs) || secs === Infinity) return "00:00";
+      const m = Math.floor(secs / 60);
+      const s = Math.floor(secs % 60);
+      return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
+    }
+
+    // Live state polling
+    setInterval(async () => {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        currentPlaybackState = data.state || 'idle';
+        document.getElementById('rc-title').textContent = data.title || 'In attesa di trasmissione';
+        document.getElementById('rc-status').textContent = 
+          currentPlaybackState === 'playing' ? '▶️ In Riproduzione' :
+          currentPlaybackState === 'paused' ? '⏸️ In Pausa' : 'Pronto per il Cast';
+
+        if (currentPlaybackState === 'playing') {
+          document.getElementById('play-icon').classList.add('hidden');
+          document.getElementById('pause-icon').classList.remove('hidden');
+        } else {
+          document.getElementById('play-icon').classList.remove('hidden');
+          document.getElementById('pause-icon').classList.add('hidden');
+        }
+
+        if (!isUserSeeking && data.duration > 0) {
+          const seekBar = document.getElementById('seek-bar');
+          seekBar.max = Math.floor(data.duration);
+          seekBar.value = Math.floor(data.currentTime);
+          document.getElementById('current-time').textContent = formatSeconds(data.currentTime);
+          document.getElementById('total-duration').textContent = formatSeconds(data.duration);
+        }
+      } catch (_) {}
+    }, 1000);
+  </script>
+</body>
+</html>

@@ -21,15 +21,16 @@ class CastDiscoveryService : Service() {
     private fun registerCastService() {
         nsdManager = (getSystemService(Context.NSD_SERVICE) as NsdManager)
 
+        val deviceName = android.os.Build.MODEL ?: "LightCast TV"
         val serviceInfo = NsdServiceInfo().apply {
-            serviceName = "Projector-Cast"
+            serviceName = "LightCast-$deviceName"
             serviceType = "_googlecast._tcp."
-            port = 8008
+            port = 8080
             setAttribute("id", "lightcast-receiver-01")
             setAttribute("ve", "05")
             setAttribute("md", "LightCast Receiver")
             setAttribute("ic", "/setup/icon.png")
-            setAttribute("fn", "Projector Cast")
+            setAttribute("fn", deviceName)
             setAttribute("ca", "4101")
             setAttribute("st", "0")
         }

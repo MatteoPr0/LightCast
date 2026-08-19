@@ -54,13 +54,15 @@ object CastCertificateGenerator {
     }
 
     private fun generateSelfSignedCertificateWithDer(keyPair: KeyPair): Pair<X509Certificate, ByteArray> {
-        val serial = BigInteger.valueOf(System.currentTimeMillis())
+        val serial = BigInteger(31, SecureRandom()).add(BigInteger.ONE)
 
         // Cast senders rifiutano certificati TLS con durata residua eccessiva.
         // Manteniamo il certificato effimero: valido da 5 min fa a +72 ore.
         val now = System.currentTimeMillis()
-        val notBefore = formatUtcTime(Date(now - 5L * 60L * 1000L))
-        val notAfter = formatUtcTime(Date(now + 72L * 60L * 60L * 1000L))
+        val dayMs = 24L * 60L * 60L * 1000L
+        val todayUtc = (now / dayMs) * dayMs
+        val notBefore = formatUtcTime(Date(todayUtc))
+        val notAfter = formatUtcTime(Date(todayUtc + 2L * dayMs))
 
         // SHA256withRSA OID: 1.2.840.113549.1.1.11
         val sha256WithRsaOid = byteArrayOf(
@@ -83,26 +85,6 @@ object CastCertificateGenerator {
 
         val pubKeyInfo = keyPair.public.encoded
 
-        // X.509 v3 Basic Constraints:
-        // critical, CA:TRUE.
-        //
-        // Cast developer/root certificates are expected to expose
-        // the CA bit in Basic Constraints.
-        val basicConstraintsExtension = derSequence(
-            derOid(byteArrayOf(0x55, 0x1d, 0x13)), // 2.5.29.19
-            derBoolean(true),                      // critical
-            derOctetString(
-                derSequence(
-                    derBoolean(true)               // CA:TRUE
-                )
-            )
-        )
-
-        val extensions = derExplicit(
-            3,
-            derSequence(basicConstraintsExtension)
-        )
-
         val tbsCert = derSequence(
             derExplicit(0, derInteger(BigInteger.valueOf(2))), // v3
             derInteger(serial),
@@ -110,8 +92,7 @@ object CastCertificateGenerator {
             nameSeq, // issuer
             validity,
             nameSeq, // subject
-            pubKeyInfo,
-            extensions
+            pubKeyInfo
         )
 
         val sig = Signature.getInstance("SHA256withRSA")

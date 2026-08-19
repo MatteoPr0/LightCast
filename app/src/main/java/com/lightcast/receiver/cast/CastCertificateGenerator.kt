@@ -83,6 +83,26 @@ object CastCertificateGenerator {
 
         val pubKeyInfo = keyPair.public.encoded
 
+        // X.509 v3 Basic Constraints:
+        // critical, CA:TRUE.
+        //
+        // Cast developer/root certificates are expected to expose
+        // the CA bit in Basic Constraints.
+        val basicConstraintsExtension = derSequence(
+            derOid(byteArrayOf(0x55, 0x1d, 0x13)), // 2.5.29.19
+            derBoolean(true),                      // critical
+            derOctetString(
+                derSequence(
+                    derBoolean(true)               // CA:TRUE
+                )
+            )
+        )
+
+        val extensions = derExplicit(
+            3,
+            derSequence(basicConstraintsExtension)
+        )
+
         val tbsCert = derSequence(
             derExplicit(0, derInteger(BigInteger.valueOf(2))), // v3
             derInteger(serial),
@@ -90,7 +110,8 @@ object CastCertificateGenerator {
             nameSeq, // issuer
             validity,
             nameSeq, // subject
-            pubKeyInfo
+            pubKeyInfo,
+            extensions
         )
 
         val sig = Signature.getInstance("SHA256withRSA")
@@ -165,6 +186,17 @@ object CastCertificateGenerator {
 
     private fun derUtcTime(timeBytes: ByteArray): ByteArray {
         return derTag(0x17, timeBytes)
+    }
+
+    private fun derBoolean(value: Boolean): ByteArray {
+        return derTag(
+            0x01,
+            byteArrayOf(if (value) 0xff.toByte() else 0x00)
+        )
+    }
+
+    private fun derOctetString(bytes: ByteArray): ByteArray {
+        return derTag(0x04, bytes)
     }
 
     private fun derBitString(bytes: ByteArray): ByteArray {

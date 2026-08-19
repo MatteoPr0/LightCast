@@ -11,6 +11,10 @@ import java.security.SecureRandom
 import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 
@@ -51,8 +55,12 @@ object CastCertificateGenerator {
 
     private fun generateSelfSignedCertificateWithDer(keyPair: KeyPair): Pair<X509Certificate, ByteArray> {
         val serial = BigInteger.valueOf(System.currentTimeMillis())
-        val notBefore = "240101000000Z".toByteArray(Charsets.US_ASCII)
-        val notAfter = "490101000000Z".toByteArray(Charsets.US_ASCII)
+
+        // Cast senders rifiutano certificati TLS con durata residua eccessiva.
+        // Manteniamo il certificato effimero: valido da 5 min fa a +72 ore.
+        val now = System.currentTimeMillis()
+        val notBefore = formatUtcTime(Date(now - 5L * 60L * 1000L))
+        val notAfter = formatUtcTime(Date(now + 72L * 60L * 60L * 1000L))
 
         // SHA256withRSA OID: 1.2.840.113549.1.1.11
         val sha256WithRsaOid = byteArrayOf(
@@ -99,6 +107,19 @@ object CastCertificateGenerator {
         val cf = CertificateFactory.getInstance("X.509")
         val cert = cf.generateCertificate(ByteArrayInputStream(certDer)) as X509Certificate
         return Pair(cert, certDer)
+    }
+
+    private fun formatUtcTime(date: Date): ByteArray {
+        val formatter = SimpleDateFormat(
+            "yyMMddHHmmss'Z'",
+            Locale.US
+        ).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+
+        return formatter
+            .format(date)
+            .toByteArray(Charsets.US_ASCII)
     }
 
     private fun derSequence(vararg elements: ByteArray): ByteArray {

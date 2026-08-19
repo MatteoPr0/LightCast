@@ -13,6 +13,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import javax.net.ssl.SSLServerSocket
+import javax.net.ssl.SSLSocket
 
 class CastV2Server(
     val port: Int = 8009,
@@ -77,6 +78,19 @@ class CastV2Server(
     private fun handleClient(socket: Socket) {
         var clientSession: ClientSession? = null
         try {
+            val sslSocket = socket as? SSLSocket
+
+            if (sslSocket != null) {
+                sslSocket.startHandshake()
+
+                Log.d(
+                    "CastV2Server",
+                    "TLS CONNECTED from ${socket.inetAddress.hostAddress}:${socket.port} " +
+                        "protocol=${sslSocket.session.protocol} " +
+                        "cipher=${sslSocket.session.cipherSuite}"
+                )
+            }
+
             val dis = DataInputStream(socket.getInputStream())
             val dos = DataOutputStream(socket.getOutputStream())
             clientSession = ClientSession(socket, dos)
@@ -92,8 +106,8 @@ class CastV2Server(
                 activeClients[castMsg.sourceId] = clientSession
                 handleCastMessage(castMsg, clientSession)
             }
-        } catch (_: IOException) {
-            // Client disconnected
+        } catch (e: IOException) {
+            Log.d("CastV2Server", "Client disconnected: ${e.message}")
         } catch (e: Exception) {
             Log.e("CastV2Server", "Client error: ${e.message}")
         } finally {
@@ -102,6 +116,12 @@ class CastV2Server(
     }
 
     private fun handleCastMessage(msg: CastMessage, client: ClientSession) {
+        Log.d(
+            "CastV2Server",
+            "RX namespace=${msg.namespace} source=${msg.sourceId} " +
+                "dest=${msg.destinationId} payloadType=${msg.payloadType}"
+        )
+
         if (msg.namespace == "urn:x-cast:com.google.cast.tp.deviceauth") {
             handleDeviceAuth(msg, client)
             return
@@ -248,30 +268,120 @@ class CastV2Server(
 
     private fun handleDeviceAuth(msg: CastMessage, client: ClientSession) {
         try {
+            val payload = msg.payloadBinary
+
+            if (payload == null) {
+                Log.w("CastV2Server", "AUTH: payload binary mancante")
+                return
+            }
+
+            val challenge = CastMessage.parseAuthChallenge(payload)
+
+            if (challenge == null) {
+                Log.w(
+                    "CastV2Server",
+                    "AUTH: impossibile leggere DeviceAuthMessage.challenge"
+                )
+                return
+            }
+
             val privateKey = CastCertificateGenerator.privateKey
             val certDer = CastCertificateGenerator.certificateDer
 
-            if (privateKey != null && certDer != null) {
-                val challengeBytes = msg.payloadBinary ?: msg.payloadUtf8?.toByteArray() ?: ByteArray(16)
-                val sig = Signature.getInstance("SHA256withRSA").apply {
-                    initSign(privateKey)
-                    update(challengeBytes)
-                }.sign()
-
-                val authRespBytes = CastMessage.buildAuthResponse(sig, certDer)
-                val authMsg = CastMessage(
-                    protocolVersion = 0,
-                    sourceId = msg.destinationId,
-                    destinationId = msg.sourceId,
-                    namespace = "urn:x-cast:com.google.cast.tp.deviceauth",
-                    payloadType = 1, // BINARY
-                    payloadBinary = authRespBytes
-                )
-                client.sendMessage(authMsg)
-                Log.d("CastV2Server", "Successfully sent AuthResponse to ${msg.sourceId}")
+            if (privateKey == null || certDer == null) {
+                Log.e("CastV2Server", "AUTH: chiave/certificato TLS non disponibili")
+                return
             }
+
+            val nonce = challenge.senderNonce
+
+            val nonceHex = nonce.joinToString("") {
+                "%02x".format(it.toInt() and 0xff)
+            }
+
+            Log.d(
+                "CastV2Server",
+                "AUTH CHALLENGE RECEIVED nonceBytes=${nonce.size} " +
+                    "nonce=$nonceHex sigAlg=${challenge.signatureAlgorithm} " +
+                    "hashAlg=${challenge.hashAlgorithm}"
+            )
+
+            // Proto default = RSASSA_PKCS1v15 (1).
+            val signatureAlgorithm =
+                if (challenge.signatureAlgorithm == 0) 1
+                else challenge.signatureAlgorithm
+
+            if (signatureAlgorithm != 1) {
+                Log.w(
+                    "CastV2Server",
+                    "AUTH: signature algorithm $signatureAlgorithm non ancora supportato"
+                )
+                return
+            }
+
+            val hashAlgorithm = challenge.hashAlgorithm
+
+            val javaSignatureAlgorithm = when (hashAlgorithm) {
+                0 -> "SHA1withRSA"
+                1 -> "SHA256withRSA"
+                else -> {
+                    Log.w(
+                        "CastV2Server",
+                        "AUTH: hash algorithm $hashAlgorithm non supportato"
+                    )
+                    return
+                }
+            }
+
+            // Chromium verifica la firma su:
+            // sender_nonce || DER del certificato TLS peer.
+            val signatureInput = ByteArray(nonce.size + certDer.size)
+
+            nonce.copyInto(
+                destination = signatureInput,
+                destinationOffset = 0
+            )
+
+            certDer.copyInto(
+                destination = signatureInput,
+                destinationOffset = nonce.size
+            )
+
+            val signature = Signature.getInstance(javaSignatureAlgorithm).apply {
+                initSign(privateKey)
+                update(signatureInput)
+            }.sign()
+
+            val authRespBytes = CastMessage.buildAuthResponse(
+                signature = signature,
+                certDer = certDer,
+                senderNonce = nonce,
+                signatureAlgorithm = signatureAlgorithm,
+                hashAlgorithm = hashAlgorithm
+            )
+
+            val authMsg = CastMessage(
+                protocolVersion = 0,
+                sourceId = msg.destinationId.ifBlank { "receiver-0" },
+                destinationId = msg.sourceId,
+                namespace = "urn:x-cast:com.google.cast.tp.deviceauth",
+                payloadType = 1,
+                payloadBinary = authRespBytes
+            )
+
+            client.sendMessage(authMsg)
+
+            Log.d(
+                "CastV2Server",
+                "AUTH RESPONSE SENT signatureBytes=${signature.size} " +
+                    "certBytes=${certDer.size} responseBytes=${authRespBytes.size}"
+            )
         } catch (e: Exception) {
-            Log.e("CastV2Server", "Error handling device auth: ${e.message}")
+            Log.e(
+                "CastV2Server",
+                "Error handling device auth: ${e.message}",
+                e
+            )
         }
     }
 

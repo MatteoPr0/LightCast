@@ -4,6 +4,12 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
+data class CastAuthChallenge(
+    val signatureAlgorithm: Int = 1,
+    val senderNonce: ByteArray = ByteArray(0),
+    val hashAlgorithm: Int = 0
+)
+
 data class CastMessage(
     val protocolVersion: Int = 0,
     val sourceId: String = "",
@@ -47,11 +53,113 @@ data class CastMessage(
     }
 
     companion object {
-        fun buildAuthResponse(signature: ByteArray, certDer: ByteArray): ByteArray {
-            val bos = ByteArrayOutputStream()
-            writeBytes(bos, 1, signature)
-            writeBytes(bos, 2, certDer)
-            return bos.toByteArray()
+        fun parseAuthChallenge(deviceAuthBytes: ByteArray): CastAuthChallenge? {
+            // DeviceAuthMessage.challenge = field 1, length-delimited.
+            val outer = ByteArrayInputStream(deviceAuthBytes)
+            var challengeBytes: ByteArray? = null
+
+            while (outer.available() > 0) {
+                val tag = readVarint(outer)
+                if (tag == -1) break
+
+                val fieldNumber = tag ushr 3
+                val wireType = tag and 0x07
+
+                if (fieldNumber == 1 && wireType == 2) {
+                    challengeBytes = readBytes(outer)
+                    break
+                } else {
+                    skipField(outer, wireType)
+                }
+            }
+
+            val bytes = challengeBytes ?: return null
+            val inner = ByteArrayInputStream(bytes)
+
+            // Proto defaults:
+            // SignatureAlgorithm.RSASSA_PKCS1v15 = 1
+            // HashAlgorithm.SHA1 = 0
+            var signatureAlgorithm = 1
+            var senderNonce = ByteArray(0)
+            var hashAlgorithm = 0
+
+            while (inner.available() > 0) {
+                val tag = readVarint(inner)
+                if (tag == -1) break
+
+                val fieldNumber = tag ushr 3
+                val wireType = tag and 0x07
+
+                when (fieldNumber) {
+                    1 -> {
+                        if (wireType == 0) {
+                            signatureAlgorithm = readVarint(inner)
+                        } else {
+                            skipField(inner, wireType)
+                        }
+                    }
+
+                    2 -> {
+                        if (wireType == 2) {
+                            senderNonce = readBytes(inner)
+                        } else {
+                            skipField(inner, wireType)
+                        }
+                    }
+
+                    3 -> {
+                        if (wireType == 0) {
+                            hashAlgorithm = readVarint(inner)
+                        } else {
+                            skipField(inner, wireType)
+                        }
+                    }
+
+                    else -> skipField(inner, wireType)
+                }
+            }
+
+            return CastAuthChallenge(
+                signatureAlgorithm = signatureAlgorithm,
+                senderNonce = senderNonce,
+                hashAlgorithm = hashAlgorithm
+            )
+        }
+
+        fun buildAuthResponse(
+            signature: ByteArray,
+            certDer: ByteArray,
+            senderNonce: ByteArray,
+            signatureAlgorithm: Int,
+            hashAlgorithm: Int
+        ): ByteArray {
+            // AuthResponse
+            val response = ByteArrayOutputStream()
+
+            // required bytes signature = 1;
+            writeBytes(response, 1, signature)
+
+            // required bytes client_auth_certificate = 2;
+            writeBytes(response, 2, certDer)
+
+            // optional SignatureAlgorithm signature_algorithm = 4;
+            writeVarint(response, (4 shl 3) or 0)
+            writeVarint(response, signatureAlgorithm)
+
+            // optional bytes sender_nonce = 5;
+            if (senderNonce.isNotEmpty()) {
+                writeBytes(response, 5, senderNonce)
+            }
+
+            // optional HashAlgorithm hash_algorithm = 6;
+            writeVarint(response, (6 shl 3) or 0)
+            writeVarint(response, hashAlgorithm)
+
+            // DeviceAuthMessage.response = field 2
+            val deviceAuthMessage = ByteArrayOutputStream()
+            writeBytes(deviceAuthMessage, 2, response.toByteArray())
+
+            return deviceAuthMessage.toByteArray()
         }
 
         fun parseFrom(data: ByteArray): CastMessage {
@@ -141,7 +249,7 @@ data class CastMessage(
                 if (read == -1) break
                 readTotal += read
             }
-            return buffer
+            return if (readTotal == length) buffer else buffer.copyOf(readTotal)
         }
 
         private fun skipField(stream: InputStream, wireType: Int) {

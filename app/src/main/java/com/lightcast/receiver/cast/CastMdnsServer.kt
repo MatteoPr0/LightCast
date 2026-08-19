@@ -89,8 +89,15 @@ class CastMdnsServer(
 
                     if (isCastQuery(queryBytes)) {
                         val localIp = getLocalIpAddress()
-                        val responseData = buildMdnsResponse(deviceName, localIp, castPort)
-                        
+                        val requestedSubtypes = extractCastSubtypes(queryBytes)
+
+                        val responseData = buildMdnsResponse(
+                            deviceName,
+                            localIp,
+                            castPort,
+                            requestedSubtypes
+                        )
+
                         try {
                             val multicastPacket = DatagramPacket(responseData, responseData.size, group, 5353)
                             socket?.send(multicastPacket)
@@ -101,7 +108,12 @@ class CastMdnsServer(
                             socket?.send(unicastPacket)
                         } catch (_: Exception) {}
 
-                        Log.d("CastMdnsServer", "Responded to Cast mDNS query from ${packet.address.hostAddress}:${packet.port}")
+                        Log.d(
+                            "CastMdnsServer",
+                            "Responded to Cast mDNS query from " +
+                                "${packet.address.hostAddress}:${packet.port} " +
+                                "subtypes=${requestedSubtypes.joinToString()}"
+                        )
                     }
                 }
             } catch (e: Exception) {
@@ -141,7 +153,12 @@ class CastMdnsServer(
                 str.contains("_fb_")
     }
 
-    private fun buildMdnsResponse(name: String, ip: String, port: Int): ByteArray {
+    private fun buildMdnsResponse(
+        name: String,
+        ip: String,
+        port: Int,
+        subtypes: List<String> = emptyList()
+    ): ByteArray {
         val bos = ByteArrayOutputStream()
         val dos = DataOutputStream(bos)
 
@@ -154,7 +171,7 @@ class CastMdnsServer(
         dos.writeShort(0x0000) // Transaction ID
         dos.writeShort(0x8400) // Flags: Response + Authoritative
         dos.writeShort(0x0000) // Questions
-        dos.writeShort(0x0001) // Answers: 1 (PTR Record)
+        dos.writeShort(1 + subtypes.size) // Answers: base PTR + requested subtype PTRs
         dos.writeShort(0x0000) // Authority
         dos.writeShort(0x0003) // Additional: 3 (SRV, TXT, A Records)
 
@@ -168,6 +185,27 @@ class CastMdnsServer(
         val ptrBytes = ptrData.toByteArray()
         dos.writeShort(ptrBytes.size)
         dos.write(ptrBytes)
+
+        // PTR dinamici per i subtype richiesti dal sender.
+        // Esempio:
+        // _B79F1B0A._sub._googlecast._tcp.local
+        //   -> LightCast-TV._googlecast._tcp.local
+        for (subtype in subtypes.distinct()) {
+            writeDnsName(dos, subtype)
+            dos.writeShort(12)       // PTR
+            dos.writeShort(0x0001)   // IN, shared
+            dos.writeInt(120)
+
+            val subtypePtrData = ByteArrayOutputStream()
+            writeDnsName(
+                DataOutputStream(subtypePtrData),
+                instanceName
+            )
+
+            val subtypePtrBytes = subtypePtrData.toByteArray()
+            dos.writeShort(subtypePtrBytes.size)
+            dos.write(subtypePtrBytes)
+        }
 
         // 2. SRV Record: instanceName -> hostName:port
         writeDnsName(dos, instanceName)
@@ -225,6 +263,115 @@ class CastMdnsServer(
         }
 
         return bos.toByteArray()
+    }
+
+    private fun extractCastSubtypes(data: ByteArray): List<String> {
+        if (data.size < 12) return emptyList()
+
+        val questionCount =
+            ((data[4].toInt() and 0xff) shl 8) or
+                (data[5].toInt() and 0xff)
+
+        var offset = 12
+        val result = LinkedHashSet<String>()
+
+        repeat(questionCount) {
+            val parsed = readDnsName(data, offset) ?: return@repeat
+            val qName = parsed.first
+            offset = parsed.second
+
+            // QTYPE + QCLASS
+            if (offset + 4 > data.size) return@repeat
+            offset += 4
+
+            val lower = qName.lowercase()
+
+            if (
+                lower.startsWith("_") &&
+                lower.endsWith("._sub._googlecast._tcp.local")
+            ) {
+                result.add(qName)
+            }
+        }
+
+        return result.toList()
+    }
+
+    private fun readDnsName(
+        data: ByteArray,
+        startOffset: Int
+    ): Pair<String, Int>? {
+        if (startOffset !in data.indices) return null
+
+        val labels = mutableListOf<String>()
+
+        var offset = startOffset
+        var nextOffset = -1
+        var jumped = false
+        var guard = 0
+
+        while (offset < data.size && guard++ < 128) {
+            val length = data[offset].toInt() and 0xff
+
+            // Fine del nome.
+            if (length == 0) {
+                if (!jumped) {
+                    nextOffset = offset + 1
+                }
+
+                if (nextOffset < 0) {
+                    nextOffset = offset + 1
+                }
+
+                return Pair(
+                    labels.joinToString("."),
+                    nextOffset
+                )
+            }
+
+            // DNS compression pointer.
+            if ((length and 0xc0) == 0xc0) {
+                if (offset + 1 >= data.size) return null
+
+                val pointer =
+                    ((length and 0x3f) shl 8) or
+                        (data[offset + 1].toInt() and 0xff)
+
+                if (pointer !in data.indices) return null
+
+                if (!jumped) {
+                    nextOffset = offset + 2
+                }
+
+                offset = pointer
+                jumped = true
+                continue
+            }
+
+            // Label normale.
+            if ((length and 0xc0) != 0) return null
+
+            offset += 1
+
+            if (offset + length > data.size) return null
+
+            labels.add(
+                String(
+                    data,
+                    offset,
+                    length,
+                    Charsets.ISO_8859_1
+                )
+            )
+
+            offset += length
+
+            if (!jumped) {
+                nextOffset = offset
+            }
+        }
+
+        return null
     }
 
     private fun writeDnsName(dos: DataOutputStream, domain: String) {

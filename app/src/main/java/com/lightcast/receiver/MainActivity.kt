@@ -23,6 +23,7 @@ import com.lightcast.receiver.cast.CastV2Server
 import com.lightcast.receiver.cast.EurekaServer
 import com.lightcast.receiver.dlna.DlnaServer
 import com.lightcast.receiver.player.LightCastPlayerManager
+import com.lightcast.receiver.player.TrackInfo
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.URLEncoder
@@ -240,6 +241,14 @@ class MainActivity : AppCompatActivity(),
                         val vol = (value as? Number)?.toFloat() ?: 1f
                         playerManager?.setVolume(vol)
                     }
+                    "cycle_audio" -> {
+                        val msg = playerManager?.cycleAudioTrack() ?: ""
+                        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                    }
+                    "cycle_subtitles" -> {
+                        val msg = playerManager?.cycleSubtitleTrack() ?: ""
+                        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                    }
                     "stop" -> stopPlaybackAndShowDashboard()
                 }
             } else {
@@ -251,6 +260,27 @@ class MainActivity : AppCompatActivity(),
                     else -> "'$value'"
                 }
                 webView?.evaluateJavascript("window.controlMedia('$action', $jsVal)", null)
+            }
+        }
+    }
+
+    override fun onGetAudioTracks(): List<TrackInfo> {
+        return playerManager?.getAudioTracks() ?: emptyList()
+    }
+
+    override fun onGetSubtitleTracks(): List<TrackInfo> {
+        return playerManager?.getSubtitleTracks() ?: emptyList()
+    }
+
+    override fun onSelectTrack(type: String, index: Int): String {
+        return if (type == "audio") {
+            playerManager?.selectAudioTrack(index) ?: ""
+        } else {
+            if (index < 0) {
+                playerManager?.disableSubtitles()
+                "Disattivati"
+            } else {
+                playerManager?.selectSubtitleTrack(index) ?: ""
             }
         }
     }
@@ -343,6 +373,16 @@ class MainActivity : AppCompatActivity(),
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
                     playerManager?.seekBy(-10)
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_PROG_BLUE -> {
+                    val msg = playerManager?.cycleAudioTrack() ?: ""
+                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CAPTIONS, KeyEvent.KEYCODE_PROG_YELLOW -> {
+                    val msg = playerManager?.cycleSubtitleTrack() ?: ""
+                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                     return true
                 }
                 KeyEvent.KEYCODE_BACK -> {

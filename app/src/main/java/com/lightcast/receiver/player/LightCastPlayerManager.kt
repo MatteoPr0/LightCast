@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -19,6 +20,13 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import com.lightcast.receiver.PlaybackState
 
+data class TrackInfo(
+    val index: Int,
+    val name: String,
+    val language: String,
+    val isSelected: Boolean
+)
+
 class LightCastPlayerManager(
     private val context: Context,
     private val playerView: PlayerView,
@@ -31,6 +39,7 @@ class LightCastPlayerManager(
     }
 
     private var exoPlayer: ExoPlayer? = null
+    private var trackSelector: DefaultTrackSelector? = null
     private var currentTitle: String = ""
     private val handler = Handler(Looper.getMainLooper())
     private var isSyncRunning = false
@@ -64,7 +73,16 @@ class LightCastPlayerManager(
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        val trackSelector = DefaultTrackSelector(context)
+        trackSelector = DefaultTrackSelector(context).apply {
+            setParameters(
+                buildUponParameters()
+                    .setPreferredAudioLanguage("ita")
+                    .setPreferredTextLanguage("ita")
+                    .setAllowAudioMixedMimeTypeAdaptiveness(true)
+                    .setAllowAudioNonSeamlessAdaptiveness(true)
+                    .setTunnelingEnabled(false)
+            )
+        }
 
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
@@ -75,10 +93,16 @@ class LightCastPlayerManager(
         val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+
         exoPlayer = ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
-            .setTrackSelector(trackSelector)
+            .setTrackSelector(trackSelector!!)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
             .build()
 
         exoPlayer?.addListener(object : Player.Listener {
@@ -129,6 +153,134 @@ class LightCastPlayerManager(
         }
 
         emitStateUpdate("playing")
+    }
+
+    fun getAudioTracks(): List<TrackInfo> {
+        val player = exoPlayer ?: return emptyList()
+        val tracks = player.currentTracks
+        val list = mutableListOf<TrackInfo>()
+        var idx = 0
+        for (group in tracks.groups) {
+            if (group.type == C.TRACK_TYPE_AUDIO) {
+                for (i in 0 until group.length) {
+                    val format = group.getTrackFormat(i)
+                    val isSelected = group.isTrackSelected(i)
+                    val lang = format.language ?: "und"
+                    val label = format.label ?: format.language ?: "Audio ${idx + 1}"
+                    val channelCount = format.channelCount
+                    val channelsStr = if (channelCount > 2) " ($channelCount ch)" else ""
+                    list.add(TrackInfo(idx, "$label$channelsStr", lang, isSelected))
+                    idx++
+                }
+            }
+        }
+        return list
+    }
+
+    fun getSubtitleTracks(): List<TrackInfo> {
+        val player = exoPlayer ?: return emptyList()
+        val tracks = player.currentTracks
+        val list = mutableListOf<TrackInfo>()
+        var idx = 0
+        for (group in tracks.groups) {
+            if (group.type == C.TRACK_TYPE_TEXT) {
+                for (i in 0 until group.length) {
+                    val format = group.getTrackFormat(i)
+                    val isSelected = group.isTrackSelected(i)
+                    val lang = format.language ?: "und"
+                    val label = format.label ?: format.language ?: "Sottotitoli ${idx + 1}"
+                    list.add(TrackInfo(idx, label, lang, isSelected))
+                    idx++
+                }
+            }
+        }
+        return list
+    }
+
+    fun selectAudioTrack(targetIndex: Int): String {
+        val player = exoPlayer ?: return ""
+        val tracks = player.currentTracks
+        var idx = 0
+        for (group in tracks.groups) {
+            if (group.type == C.TRACK_TYPE_AUDIO) {
+                for (i in 0 until group.length) {
+                    if (idx == targetIndex) {
+                        val format = group.getTrackFormat(i)
+                        val lang = format.language
+                        val selector = trackSelector ?: return ""
+                        val params = selector.parameters.buildUpon()
+                        if (lang != null) {
+                            params.setPreferredAudioLanguage(lang)
+                        }
+                        params.setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                        selector.setParameters(params)
+                        return format.label ?: format.language ?: "Audio ${idx + 1}"
+                    }
+                    idx++
+                }
+            }
+        }
+        return ""
+    }
+
+    fun cycleAudioTrack(): String {
+        val tracks = getAudioTracks()
+        if (tracks.isEmpty()) return "Nessuna traccia audio"
+        if (tracks.size == 1) return "Traccia unica: ${tracks[0].name}"
+        val curIndex = tracks.indexOfFirst { it.isSelected }.let { if (it == -1) 0 else it }
+        val nextIndex = (curIndex + 1) % tracks.size
+        selectAudioTrack(nextIndex)
+        return "Audio: ${tracks[nextIndex].name} (${nextIndex + 1}/${tracks.size})"
+    }
+
+    fun cycleSubtitleTrack(): String {
+        val subs = getSubtitleTracks()
+        if (subs.isEmpty()) return "Nessun sottotitolo disponibile"
+        val curIndex = subs.indexOfFirst { it.isSelected }
+        if (curIndex == -1) {
+            selectSubtitleTrack(0)
+            return "Sottotitoli: ${subs[0].name} (1/${subs.size})"
+        } else if (curIndex == subs.size - 1) {
+            disableSubtitles()
+            return "Sottotitoli disattivati"
+        } else {
+            val nextIndex = curIndex + 1
+            selectSubtitleTrack(nextIndex)
+            return "Sottotitoli: ${subs[nextIndex].name} (${nextIndex + 1}/${subs.size})"
+        }
+    }
+
+    fun selectSubtitleTrack(targetIndex: Int): String {
+        val player = exoPlayer ?: return ""
+        val tracks = player.currentTracks
+        var idx = 0
+        for (group in tracks.groups) {
+            if (group.type == C.TRACK_TYPE_TEXT) {
+                for (i in 0 until group.length) {
+                    if (idx == targetIndex) {
+                        val format = group.getTrackFormat(i)
+                        val lang = format.language
+                        val selector = trackSelector ?: return ""
+                        val params = selector.parameters.buildUpon()
+                        if (lang != null) {
+                            params.setPreferredTextLanguage(lang)
+                        }
+                        params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        selector.setParameters(params)
+                        return format.label ?: format.language ?: "Sottotitoli ${idx + 1}"
+                    }
+                    idx++
+                }
+            }
+        }
+        return ""
+    }
+
+    fun disableSubtitles() {
+        val selector = trackSelector ?: return
+        selector.setParameters(
+            selector.parameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+        )
     }
 
     fun pause() {

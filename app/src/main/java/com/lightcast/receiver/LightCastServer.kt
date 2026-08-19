@@ -2,7 +2,9 @@ package com.lightcast.receiver
 
 import android.content.Context
 import android.util.Log
+import com.lightcast.receiver.player.TrackInfo
 import fi.iki.elonen.NanoHTTPD
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
@@ -26,6 +28,9 @@ class LightCastServer(
     interface ServerListener {
         fun onCastMedia(url: String, title: String, type: String)
         fun onControlMedia(action: String, value: Any?)
+        fun onGetAudioTracks(): List<TrackInfo>
+        fun onGetSubtitleTracks(): List<TrackInfo>
+        fun onSelectTrack(type: String, index: Int): String
     }
 
     var playbackState = PlaybackState()
@@ -61,7 +66,7 @@ class LightCastServer(
                     serveAsset("qrcode.min.js", "application/javascript")
                 }
                 uri == "/dd.xml" || uri == "/ssdp/device-desc.xml" -> {
-                    val deviceName = android.os.Build.MODEL ?: "LightCast TV"
+                    val deviceName = "LightCast TV"
                     val xml = """<?xml version="1.0"?>
 <root xmlns="urn:schemas-upnp-org:device-1-0">
   <specVersion>
@@ -118,6 +123,44 @@ class LightCastServer(
                     }
                     newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
                 }
+                uri == "/api/tracks" && method == Method.GET -> {
+                    val audioList = listener.onGetAudioTracks()
+                    val subList = listener.onGetSubtitleTracks()
+                    val json = JSONObject().apply {
+                        val audioArr = JSONArray()
+                        for (t in audioList) {
+                            audioArr.put(JSONObject().apply {
+                                put("index", t.index)
+                                put("name", t.name)
+                                put("language", t.language)
+                                put("isSelected", t.isSelected)
+                            })
+                        }
+                        put("audio", audioArr)
+
+                        val subArr = JSONArray()
+                        for (t in subList) {
+                            subArr.put(JSONObject().apply {
+                                put("index", t.index)
+                                put("name", t.name)
+                                put("language", t.language)
+                                put("isSelected", t.isSelected)
+                            })
+                        }
+                        put("subtitles", subArr)
+                    }
+                    newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
+                }
+                uri == "/api/tracks/select" && method == Method.POST -> {
+                    val body = HashMap<String, String>()
+                    session.parseBody(body)
+                    val postData = body["postData"] ?: ""
+                    val json = JSONObject(postData)
+                    val type = json.optString("type", "audio")
+                    val index = json.optInt("index", 0)
+                    val result = listener.onSelectTrack(type, index)
+                    newFixedLengthResponse(Response.Status.OK, "application/json", """{"status":"ok","selected":"$result"}""")
+                }
                 uri == "/api/cast" && method == Method.POST -> {
                     val body = HashMap<String, String>()
                     session.parseBody(body)
@@ -139,11 +182,7 @@ class LightCastServer(
                         else -> json.optString("type", "video/mp4")
                     }
 
-                    if (url.isNotEmpty()) {
-                        playbackState.title = title
-                        playbackState.state = "playing"
-                        listener.onCastMedia(url, title, type)
-                    }
+                    listener.onCastMedia(url, title, type)
                     newFixedLengthResponse(Response.Status.OK, "application/json", """{"status":"ok"}""")
                 }
                 uri == "/api/control" && method == Method.POST -> {
@@ -153,7 +192,6 @@ class LightCastServer(
                     val json = JSONObject(postData)
                     val action = json.optString("action", "")
                     val value = json.opt("value")
-
                     listener.onControlMedia(action, value)
                     newFixedLengthResponse(Response.Status.OK, "application/json", """{"status":"ok"}""")
                 }
@@ -161,81 +199,68 @@ class LightCastServer(
                     val files = HashMap<String, String>()
                     session.parseBody(files)
                     
-                    var savedFileName = ""
-                    var detectedMime = "video/mp4"
+                    val originalFilename = session.parms["mediaFile"] ?: session.parms["file"] ?: "uploaded_media.mp4"
+                    val tempFilePath = files["mediaFile"] ?: files["file"]
+                    
+                    if (tempFilePath != null) {
+                        val tempFile = File(tempFilePath)
+                        val ext = originalFilename.substringAfterLast('.', "mp4")
+                        val destFile = File(mediaDir, "media_${System.currentTimeMillis()}.$ext")
+                        
+                        tempFile.copyTo(destFile, overwrite = true)
+                        tempFile.delete()
 
-                    val originalFileName = session.parms["mediaFile"] ?: "video.mp4"
-                    val ext = originalFileName.substringAfterLast('.', "mp4").lowercase()
-
-                    detectedMime = when (ext) {
-                        "jpg", "jpeg" -> "image/jpeg"
-                        "png" -> "image/png"
-                        "gif" -> "image/gif"
-                        "webp" -> "image/webp"
-                        "mkv" -> "video/matroska"
-                        "mp4", "m4v" -> "video/mp4"
-                        "webm" -> "video/webm"
-                        "mp3" -> "audio/mpeg"
-                        "flac" -> "audio/flac"
-                        else -> "video/mp4"
-                    }
-
-                    for ((key, tempFilePath) in files) {
-                        if (key == "mediaFile" || key.startsWith("mediaFile")) {
-                            val tempFile = File(tempFilePath)
-                            val targetFile = File(mediaDir, "media_${System.currentTimeMillis()}.$ext")
-                            tempFile.copyTo(targetFile, overwrite = true)
-                            savedFileName = targetFile.name
-                            break
+                        val host = session.headers["host"] ?: "127.0.0.1:$serverPort"
+                        val fileUrl = "http://$host/media/${destFile.name}"
+                        val lowerExt = ext.lowercase()
+                        val mimeType = when (lowerExt) {
+                            "jpg", "jpeg" -> "image/jpeg"
+                            "png" -> "image/png"
+                            "gif" -> "image/gif"
+                            "webp" -> "image/webp"
+                            "mp3" -> "audio/mpeg"
+                            "mkv" -> "video/matroska"
+                            "webm" -> "video/webm"
+                            else -> "video/mp4"
                         }
-                    }
 
-                    if (savedFileName.isNotEmpty()) {
-                        val localStreamUrl = "http://127.0.0.1:$serverPort/media/$savedFileName"
-                        val displayTitle = originalFileName.substringBeforeLast('.')
-                        playbackState.title = displayTitle
-                        playbackState.state = "playing"
-                        listener.onCastMedia(localStreamUrl, displayTitle, detectedMime)
-                        newFixedLengthResponse(Response.Status.OK, "application/json", """{"status":"ok","file":"$savedFileName"}""")
+                        listener.onCastMedia(fileUrl, originalFilename, mimeType)
+                        newFixedLengthResponse(Response.Status.OK, "application/json", """{"status":"ok","url":"$fileUrl"}""")
                     } else {
                         newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", """{"error":"No file uploaded"}""")
                     }
                 }
                 uri.startsWith("/media/") -> {
-                    val fileName = uri.removePrefix("/media/")
-                    val file = File(mediaDir, fileName)
-                    if (file.exists()) {
-                        serveMediaFile(session, file)
+                    val filename = uri.removePrefix("/media/")
+                    val file = File(mediaDir, filename)
+                    if (file.exists() && file.isFile) {
+                        val ext = filename.substringAfterLast('.', "")
+                        val mime = when (ext.lowercase()) {
+                            "mp4" -> "video/mp4"
+                            "mkv" -> "video/x-matroska"
+                            "webm" -> "video/webm"
+                            "mp3" -> "audio/mpeg"
+                            "jpg", "jpeg" -> "image/jpeg"
+                            "png" -> "image/png"
+                            "gif" -> "image/gif"
+                            "webp" -> "image/webp"
+                            else -> "application/octet-stream"
+                        }
+                        serveFileWithRange(session, file, mime)
                     } else {
                         newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "File not found")
                     }
-                }
-                uri == "/setup/eureka_info" -> {
-                    val json = JSONObject().apply {
-                        put("name", "LightCast TV")
-                        put("device_info", JSONObject().apply {
-                            put("manufacturer", "Google Inc.")
-                            put("model_name", "Eureka Dongle")
-                            put("cast_build_revision", "1.56.281627")
-                            put("ssdp_udn", "f3b4c10a-4a82-1e90-b8f0-41235b849201")
-                            put("mac_address", "FA:8F:CA:75:68:DE")
-                        })
-                        put("net", JSONObject().apply {
-                            put("online", true)
-                        })
-                        put("version", 8)
-                    }
-                    newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
                 }
                 else -> {
                     newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404 Not Found")
                 }
             }
+
             addCorsHeaders(response)
             return response
         } catch (e: Exception) {
-            Log.e("LightCastServer", "Error serving request $uri: ${e.message}", e)
-            val err = newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Internal Error: ${e.message}")
+            Log.e("LightCastServer", "Error serving $uri: ${e.message}", e)
+            val err = newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Internal Server Error: ${e.message}")
             addCorsHeaders(err)
             return err
         }
@@ -250,41 +275,40 @@ class LightCastServer(
         }
     }
 
-    private fun serveMediaFile(session: IHTTPSession, file: File): Response {
-        val range = session.headers["range"]
+    private fun serveFileWithRange(session: IHTTPSession, file: File, mimeType: String): Response {
         val fileLength = file.length()
-        val mime = when {
-            file.name.endsWith(".mp4", true) -> "video/mp4"
-            file.name.endsWith(".mkv", true) -> "video/matroska"
-            file.name.endsWith(".webm", true) -> "video/webm"
-            file.name.endsWith(".mp3", true) -> "audio/mpeg"
-            file.name.endsWith(".jpg", true) || file.name.endsWith(".jpeg", true) -> "image/jpeg"
-            file.name.endsWith(".png", true) -> "image/png"
-            file.name.endsWith(".gif", true) -> "image/gif"
-            file.name.endsWith(".webp", true) -> "image/webp"
-            else -> "video/mp4"
-        }
+        val rangeHeader = session.headers["range"]
 
-        if (range != null && range.startsWith("bytes=")) {
-            val ranges = range.substring("bytes=".length).split("-")
-            val start = ranges[0].toLongOrNull() ?: 0L
-            val end = if (ranges.size > 1 && ranges[1].isNotEmpty()) ranges[1].toLongOrNull() ?: (fileLength - 1) else (fileLength - 1)
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            val range = rangeHeader.substring(6).split("-")
+            val start = range[0].toLongOrNull() ?: 0L
+            val end = if (range.size > 1 && range[1].isNotEmpty()) {
+                range[1].toLongOrNull() ?: (fileLength - 1)
+            } else {
+                fileLength - 1
+            }
+
+            if (start >= fileLength || end >= fileLength || start > end) {
+                val res = newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, "text/plain", "")
+                res.addHeader("Content-Range", "bytes */$fileLength")
+                return res
+            }
+
             val contentLength = end - start + 1
+            val fis = FileInputStream(file)
+            fis.skip(start)
 
-            val fis = FileInputStream(file).apply { skip(start) }
-            val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mime, fis, contentLength)
+            val res = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mimeType, fis, contentLength)
             res.addHeader("Content-Range", "bytes $start-$end/$fileLength")
-            res.addHeader("Accept-Ranges", "bytes")
             res.addHeader("Content-Length", contentLength.toString())
-            addCorsHeaders(res)
+            res.addHeader("Accept-Ranges", "bytes")
             return res
         }
 
         val fis = FileInputStream(file)
-        val res = newFixedLengthResponse(Response.Status.OK, mime, fis, fileLength)
-        res.addHeader("Accept-Ranges", "bytes")
+        val res = newFixedLengthResponse(Response.Status.OK, mimeType, fis, fileLength)
         res.addHeader("Content-Length", fileLength.toString())
-        addCorsHeaders(res)
+        res.addHeader("Accept-Ranges", "bytes")
         return res
     }
 

@@ -42,7 +42,7 @@ class CastMdnsServer(
                     reuseAddress = true
                     timeToLive = 255
                     try {
-                        loopbackMode = true // Disable looping packets back to self
+                        loopbackMode = true
                     } catch (_: Exception) {}
 
                     if (wlanIface != null) {
@@ -107,11 +107,14 @@ class CastMdnsServer(
     }
 
     private fun isCastQuery(data: ByteArray): Boolean {
+        if (data.size < 12) return false
+        val flags = ((data[2].toInt() and 0xFF) shl 8) or (data[3].toInt() and 0xFF)
+        val isQuery = (flags and 0x8000) == 0
+        if (!isQuery) return false
+
         val str = String(data, Charsets.ISO_8859_1)
         return str.contains("_googlecast") ||
-                str.contains("_tcp") ||
                 str.contains("LightCast") ||
-                str.contains("_dns-sd") ||
                 str.contains("_fb_")
     }
 
@@ -122,7 +125,7 @@ class CastMdnsServer(
         val serviceType = "_googlecast._tcp.local"
         val safeName = name.replace(" ", "-")
         val instanceName = "$safeName.$serviceType"
-        val hostName = "LightCast-device.local"
+        val hostName = "$safeName.local"
 
         // Header
         dos.writeShort(0x0000) // Transaction ID
@@ -173,7 +176,8 @@ class CastMdnsServer(
             "st=0",
             "rs=",
             "bs=FA8FCA7568DE",
-            "nf=1"
+            "nf=1",
+            "rm="
         )
         val txtData = ByteArrayOutputStream()
         for (attr in txtAttrs) {

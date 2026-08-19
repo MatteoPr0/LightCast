@@ -1,6 +1,7 @@
 package com.lightcast.receiver.player
 
 import android.content.Context
+import android.media.AudioFormat
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -8,6 +9,7 @@ import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
@@ -16,6 +18,9 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioCapabilities
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
@@ -63,7 +68,21 @@ class LightCastPlayerManager(
     }
 
     private fun initializePlayer() {
-        val renderersFactory = DefaultRenderersFactory(context).apply {
+        val stereoOnlyCapabilities = AudioCapabilities(intArrayOf(AudioFormat.ENCODING_PCM_16BIT), 2)
+
+        val renderersFactory = object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink {
+                return DefaultAudioSink.Builder(context)
+                    .setAudioCapabilities(stereoOnlyCapabilities)
+                    .setEnableFloatOutput(false)
+                    .setEnableAudioTrackPlaybackParams(true)
+                    .build()
+            }
+        }.apply {
             setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             setEnableDecoderFallback(true)
         }
@@ -191,7 +210,20 @@ class LightCastPlayerManager(
     fun play(url: String, title: String) {
         currentTitle = title
         val uri = Uri.parse(url)
-        val mediaItem = MediaItem.fromUri(uri)
+        val lowerUrl = url.lowercase()
+
+        val mediaItemBuilder = MediaItem.Builder().setUri(uri)
+        if (lowerUrl.contains(".m3u8") || lowerUrl.contains("m3u8") || lowerUrl.contains("hls") || lowerUrl.contains("playlist")) {
+            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8)
+        } else if (lowerUrl.contains(".mpd") || lowerUrl.contains("dash")) {
+            mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_MPD)
+        } else if (lowerUrl.contains(".m4v") || lowerUrl.contains(".mp4")) {
+            mediaItemBuilder.setMimeType(MimeTypes.VIDEO_MP4)
+        } else if (lowerUrl.contains(".mkv")) {
+            mediaItemBuilder.setMimeType(MimeTypes.VIDEO_MATROSKA)
+        }
+
+        val mediaItem = mediaItemBuilder.build()
 
         exoPlayer?.apply {
             setMediaItem(mediaItem)

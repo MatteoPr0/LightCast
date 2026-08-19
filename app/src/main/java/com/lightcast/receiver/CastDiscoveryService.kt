@@ -25,14 +25,16 @@ class CastDiscoveryService : Service() {
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = "LightCast-$deviceName"
             serviceType = "_googlecast._tcp."
-            port = 8080
-            setAttribute("id", "lightcast-receiver-01")
+            port = 8009
+            setAttribute("id", "f3b4c10a4a821e90b8f041235b849201")
             setAttribute("ve", "05")
             setAttribute("md", "LightCast Receiver")
             setAttribute("ic", "/setup/icon.png")
             setAttribute("fn", deviceName)
             setAttribute("ca", "4101")
             setAttribute("st", "0")
+            setAttribute("rs", "")
+            setAttribute("bs", "FA8FCA7568DE")
         }
 
         registrationListener = object : NsdManager.RegistrationListener {

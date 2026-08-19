@@ -16,20 +16,28 @@ import android.webkit.*
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.ui.PlayerView
+import com.lightcast.receiver.cast.CastV2Server
 import com.lightcast.receiver.player.LightCastPlayerManager
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.URLEncoder
 
-class MainActivity : AppCompatActivity(), LightCastServer.ServerListener, LightCastPlayerManager.PlayerStateListener {
+class MainActivity : AppCompatActivity(),
+    LightCastServer.ServerListener,
+    CastV2Server.CastV2Listener,
+    LightCastPlayerManager.PlayerStateListener {
+
     private var webView: WebView? = null
     private var playerView: PlayerView? = null
     private var playerTopOverlay: View? = null
     private var playerMediaTitle: TextView? = null
-    
+
     private var playerManager: LightCastPlayerManager? = null
     private var httpServer: LightCastServer? = null
-    private val serverPort = 8080
+    private var castV2Server: CastV2Server? = null
+
+    private val httpPort = 8080
+    private val castPort = 8009
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,7 +52,10 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener, LightC
             playerTopOverlay = findViewById(R.id.playerTopOverlay)
             playerMediaTitle = findViewById(R.id.playerMediaTitle)
 
+            val deviceName = Build.MODEL ?: "LightCast TV"
+
             startHttpServer()
+            startCastV2Server(deviceName)
             setupOptimizedWebView()
             setupExoPlayer()
 
@@ -53,9 +64,8 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener, LightC
             } catch (_: Exception) {}
 
             val ip = getLocalIpAddress()
-            val deviceName = Build.MODEL ?: "LightCast TV"
             val encodedName = URLEncoder.encode(deviceName, "UTF-8")
-            val targetUrl = "file:///android_asset/receiver.html?ip=$ip&port=$serverPort&name=$encodedName"
+            val targetUrl = "file:///android_asset/receiver.html?ip=$ip&port=$httpPort&name=$encodedName"
 
             webView?.loadUrl(targetUrl)
         } catch (e: Exception) {
@@ -65,11 +75,21 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener, LightC
 
     private fun startHttpServer() {
         try {
-            httpServer = LightCastServer(serverPort, this, this)
+            httpServer = LightCastServer(httpPort, this, this)
             httpServer?.start()
-            Log.d("MainActivity", "LightCast Server running on port $serverPort")
+            Log.d("MainActivity", "LightCast Web Server running on port $httpPort")
         } catch (e: Exception) {
             Log.e("MainActivity", "Failed to start HTTP server: ${e.message}", e)
+        }
+    }
+
+    private fun startCastV2Server(deviceName: String) {
+        try {
+            castV2Server = CastV2Server(castPort, deviceName, this)
+            castV2Server?.start()
+            Log.d("MainActivity", "LightCast Cast V2 Server running on port $castPort")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to start Cast V2 server: ${e.message}", e)
         }
     }
 
@@ -177,6 +197,10 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener, LightC
                 webView?.evaluateJavascript("window.controlMedia('$action', $jsVal)", null)
             }
         }
+    }
+
+    override fun onGetMediaStatus(): PlaybackState {
+        return httpServer?.playbackState ?: PlaybackState()
     }
 
     override fun onPlayerStateChanged(state: PlaybackState) {
@@ -292,6 +316,9 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener, LightC
     }
 
     override fun onDestroy() {
+        try {
+            castV2Server?.stop()
+        } catch (_: Exception) {}
         try {
             playerManager?.release()
         } catch (_: Exception) {}

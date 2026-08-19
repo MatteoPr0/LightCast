@@ -69,22 +69,7 @@ class LightCastPlayerManager(
         initializePlayer()
     }
 
-    private fun initializePlayer() {
-        val stereoOnlyCapabilities = AudioCapabilities(intArrayOf(AudioFormat.ENCODING_PCM_16BIT), 2)
-
-        val renderersFactory = object : DefaultRenderersFactory(context) {
-            override fun buildAudioSink(
-                context: Context,
-                enableFloatOutput: Boolean,
-                enableAudioTrackPlaybackParams: Boolean
-            ): AudioSink {
-                return DefaultAudioSink.Builder(context)
-                    .setAudioCapabilities(stereoOnlyCapabilities)
-                    .setEnableFloatOutput(false)
-                    .setEnableAudioTrackPlaybackParams(true)
-                    .build()
-            }
-        }.apply {
+        val renderersFactory = DefaultRenderersFactory(context).apply {
             setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             setEnableDecoderFallback(true)
         }

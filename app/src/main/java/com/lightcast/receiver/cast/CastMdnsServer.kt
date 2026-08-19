@@ -40,11 +40,11 @@ class CastMdnsServer(
                     try {
                         joinGroup(group)
                     } catch (e: Exception) {
-                        Log.w("CastMdnsServer", "joinGroup standard: ${e.message}")
+                        Log.w("CastMdnsServer", "joinGroup: ${e.message}")
                     }
                 }
 
-                Log.d("CastMdnsServer", "Pure Kotlin mDNS Multicast Server listening on 224.0.0.251:5353")
+                Log.d("CastMdnsServer", "mDNS Multicast Server listening on 224.0.0.251:5353")
 
                 val buffer = ByteArray(2048)
                 while (isRunning) {
@@ -58,16 +58,18 @@ class CastMdnsServer(
                     if (isCastQuery(queryBytes)) {
                         val localIp = getLocalIpAddress()
                         val responseData = buildMdnsResponse(deviceName, localIp, castPort)
-                        val resPacket = DatagramPacket(responseData, responseData.size, group, 5353)
-                        socket?.send(resPacket)
                         
-                        // Also send unicast reply directly to querying device
+                        try {
+                            val multicastPacket = DatagramPacket(responseData, responseData.size, group, 5353)
+                            socket?.send(multicastPacket)
+                        } catch (_: Exception) {}
+
                         try {
                             val unicastPacket = DatagramPacket(responseData, responseData.size, packet.address, packet.port)
                             socket?.send(unicastPacket)
                         } catch (_: Exception) {}
-                        
-                        Log.d("CastMdnsServer", "Responded to Cast mDNS query from ${packet.address.hostAddress}")
+
+                        Log.d("CastMdnsServer", "Responded to Cast mDNS query from ${packet.address.hostAddress}:${packet.port}")
                     }
                 }
             } catch (e: Exception) {
@@ -91,7 +93,11 @@ class CastMdnsServer(
 
     private fun isCastQuery(data: ByteArray): Boolean {
         val str = String(data, Charsets.ISO_8859_1)
-        return str.contains("_googlecast") || str.contains("_tcp") || str.contains("LightCast")
+        return str.contains("_googlecast") ||
+                str.contains("_tcp") ||
+                str.contains("LightCast") ||
+                str.contains("_dns-sd") ||
+                str.contains("_fb_")
     }
 
     private fun buildMdnsResponse(name: String, ip: String, port: Int): ByteArray {
@@ -99,16 +105,17 @@ class CastMdnsServer(
         val dos = DataOutputStream(bos)
 
         val serviceType = "_googlecast._tcp.local"
-        val instanceName = "LightCast-$name.$serviceType"
-        val hostName = "LightCast-f3b4c10a.local"
+        val safeName = name.replace(" ", "-")
+        val instanceName = "$safeName.$serviceType"
+        val hostName = "LightCast-device.local"
 
         // Header
         dos.writeShort(0x0000) // Transaction ID
         dos.writeShort(0x8400) // Flags: Response + Authoritative
-        dos.writeShort(0x0000) // Questions: 0
+        dos.writeShort(0x0000) // Questions
         dos.writeShort(0x0004) // Answers: 4 (PTR, SRV, TXT, A)
-        dos.writeShort(0x0000) // Authority RRs
-        dos.writeShort(0x0000) // Additional RRs
+        dos.writeShort(0x0000) // Authority
+        dos.writeShort(0x0000) // Additional
 
         // 1. PTR Record: _googlecast._tcp.local -> instanceName
         writeDnsName(dos, serviceType)
@@ -130,7 +137,7 @@ class CastMdnsServer(
         val srvDos = DataOutputStream(srvData)
         srvDos.writeShort(0) // Priority
         srvDos.writeShort(0) // Weight
-        srvDos.writeShort(port) // Port
+        srvDos.writeShort(port) // Port (8009)
         writeDnsName(srvDos, hostName)
         val srvBytes = srvData.toByteArray()
         dos.writeShort(srvBytes.size)
@@ -144,13 +151,14 @@ class CastMdnsServer(
         val txtAttrs = listOf(
             "id=f3b4c10a4a821e90b8f041235b849201",
             "ve=05",
-            "md=LightCast Receiver",
+            "md=Chromecast",
             "ic=/setup/icon.png",
             "fn=$name",
             "ca=4101",
             "st=0",
             "rs=",
-            "bs=FA8FCA7568DE"
+            "bs=FA8FCA7568DE",
+            "nf=1"
         )
         val txtData = ByteArrayOutputStream()
         for (attr in txtAttrs) {
@@ -184,7 +192,7 @@ class CastMdnsServer(
             dos.writeByte(b.size)
             dos.write(b)
         }
-        dos.writeByte(0) // Root label
+        dos.writeByte(0) // Root
     }
 
     private fun getLocalIpAddress(): String {

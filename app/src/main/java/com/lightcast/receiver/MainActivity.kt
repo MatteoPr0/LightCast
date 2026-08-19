@@ -20,6 +20,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.ui.PlayerView
 import com.lightcast.receiver.cast.CastMdnsServer
 import com.lightcast.receiver.cast.CastV2Server
+import com.lightcast.receiver.cast.EurekaServer
 import com.lightcast.receiver.player.LightCastPlayerManager
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -37,10 +38,12 @@ class MainActivity : AppCompatActivity(),
 
     private var playerManager: LightCastPlayerManager? = null
     private var httpServer: LightCastServer? = null
+    private var eurekaServer: EurekaServer? = null
     private var castV2Server: CastV2Server? = null
     private var castMdnsServer: CastMdnsServer? = null
 
     private val httpPort = 8080
+    private val eurekaPort = 8008
     private val castPort = 8009
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,6 +62,7 @@ class MainActivity : AppCompatActivity(),
             val deviceName = Build.MODEL ?: "LightCast TV"
 
             startHttpServer()
+            startEurekaServer(deviceName)
             startCastV2Server(deviceName)
             startCastMdnsServer(deviceName)
             setupOptimizedWebView()
@@ -92,6 +96,16 @@ class MainActivity : AppCompatActivity(),
             Log.d("MainActivity", "LightCast Web Server running on port $httpPort")
         } catch (e: Exception) {
             Log.e("MainActivity", "Failed to start HTTP server: ${e.message}", e)
+        }
+    }
+
+    private fun startEurekaServer(deviceName: String) {
+        try {
+            eurekaServer = EurekaServer(eurekaPort, deviceName, this)
+            eurekaServer?.start()
+            Log.d("MainActivity", "LightCast Eureka Server running on port $eurekaPort")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to start Eureka server: ${e.message}", e)
         }
     }
 
@@ -350,6 +364,9 @@ class MainActivity : AppCompatActivity(),
         } catch (_: Exception) {}
         try {
             castV2Server?.stop()
+        } catch (_: Exception) {}
+        try {
+            eurekaServer?.stop()
         } catch (_: Exception) {}
         try {
             playerManager?.release()

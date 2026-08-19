@@ -1,0 +1,163 @@
+package com.lightcast.receiver.cast
+
+import android.content.Context
+import android.util.Log
+import fi.iki.elonen.NanoHTTPD
+import org.json.JSONObject
+
+class EurekaServer(
+    val port: Int = 8008,
+    private val deviceName: String,
+    private val context: Context
+) : NanoHTTPD(port) {
+
+    override fun serve(session: IHTTPSession): Response {
+        val uri = session.uri
+        val method = session.method
+
+        if (method == Method.OPTIONS) {
+            val res = newFixedLengthResponse(Response.Status.OK, "text/plain", "")
+            addCorsHeaders(res)
+            return res
+        }
+
+        try {
+            val response = when {
+                uri.startsWith("/setup/eureka_info") -> {
+                    val host = session.headers["host"] ?: "127.0.0.1"
+                    val ip = host.substringBefore(':')
+                    val json = JSONObject().apply {
+                        put("bssid", "fa:8f:ca:75:68:de")
+                        put("build_version", "1.56.281627")
+                        put("cast_build_revision", "1.56.281627")
+                        put("closed_caption", JSONObject())
+                        put("connected", true)
+                        put("ethernet_connected", false)
+                        put("hotspot_bssid", "fa:8f:ca:75:68:de")
+                        put("ip_address", ip)
+                        put("locale", "it-IT")
+                        put("location", JSONObject().apply {
+                            put("country_code", "IT")
+                            put("latitude", 0)
+                            put("longitude", 0)
+                        })
+                        put("mac_address", "FA:8F:CA:75:68:DE")
+                        put("name", deviceName)
+                        put("net", JSONObject().apply {
+                            put("control_port", 8009)
+                            put("ethernet_connected", false)
+                            put("ip_address", ip)
+                            put("online", true)
+                        })
+                        put("noise_level", -90)
+                        put("opt_in", JSONObject().apply {
+                            put("crash", false)
+                            put("opencast", false)
+                            put("stats", false)
+                        })
+                        put("public_key", "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAz")
+                        put("release_track", "stable-channel")
+                        put("setup", JSONObject().apply {
+                            put("cast_build_revision", "1.56.281627")
+                            put("connected", true)
+                            put("ethernet_connected", false)
+                            put("ip_address", ip)
+                            put("online", true)
+                            put("ssid", "LightCast")
+                            put("state", 0)
+                        })
+                        put("setup_state", 60)
+                        put("signal_level", -50)
+                        put("ssdp_udn", "f3b4c10a-4a82-1e90-b8f0-41235b849201")
+                        put("ssdp_uuid", "f3b4c10a-4a82-1e90-b8f0-41235b849201")
+                        put("timezone", "Europe/Rome")
+                        put("tos_accepted", true)
+                        put("uma_desc", "")
+                        put("uptime", 3600.0)
+                        put("version", 8)
+                        put("wpa_configured", true)
+                        put("wpa_id", 0)
+                        put("wpa_state", 10)
+                    }
+                    newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
+                }
+                uri == "/setup/icon.png" -> {
+                    serveAsset("qrcode.min.js", "image/png")
+                }
+                uri == "/dd.xml" || uri == "/ssdp/device-desc.xml" -> {
+                    val host = session.headers["host"] ?: "127.0.0.1"
+                    val ip = host.substringBefore(':')
+                    val xml = """<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:dial-multicast:org:device:dial:1</deviceType>
+    <friendlyName>$deviceName</friendlyName>
+    <manufacturer>Google Inc.</manufacturer>
+    <modelName>Eureka Dongle</modelName>
+    <UDN>uuid:f3b4c10a-4a82-1e90-b8f0-41235b849201</UDN>
+    <serviceList>
+      <service>
+        <serviceType>urn:dial-multicast:org:service:dial:1</serviceType>
+        <serviceId>urn:dial-multicast:org:serviceId:dial</serviceId>
+        <controlURL>/apps</controlURL>
+        <eventSubURL></eventSubURL>
+        <SCPDURL></SCPDURL>
+      </service>
+    </serviceList>
+  </device>
+</root>"""
+                    val res = newFixedLengthResponse(Response.Status.OK, "application/xml", xml)
+                    res.addHeader("Application-URL", "http://$ip:8008/apps/")
+                    res
+                }
+                uri.startsWith("/apps/") -> {
+                    val appName = uri.removePrefix("/apps/")
+                    if (method == Method.GET) {
+                        val appXml = """<?xml version="1.0" encoding="UTF-8"?>
+<service xmlns="urn:dial-multicast:org:service:dial:1" dialVer="1.7">
+  <name>$appName</name>
+  <options allowStop="true"/>
+  <state>stopped</state>
+</service>"""
+                        newFixedLengthResponse(Response.Status.OK, "application/xml", appXml)
+                    } else if (method == Method.POST) {
+                        val res = newFixedLengthResponse(Response.Status.CREATED, "text/plain", "")
+                        res.addHeader("Location", "http://${session.headers["host"] ?: "127.0.0.1:$port"}/apps/$appName/run")
+                        res
+                    } else {
+                        newFixedLengthResponse(Response.Status.OK, "text/plain", "OK")
+                    }
+                }
+                else -> {
+                    newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404 Not Found")
+                }
+            }
+            addCorsHeaders(response)
+            return response
+        } catch (e: Exception) {
+            Log.e("EurekaServer", "Error serving $uri: ${e.message}", e)
+            val err = newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Internal Error: ${e.message}")
+            addCorsHeaders(err)
+            return err
+        }
+    }
+
+    private fun serveAsset(assetName: String, mimeType: String): Response {
+        return try {
+            val input: java.io.InputStream = context.assets.open(assetName)
+            newChunkedResponse(Response.Status.OK, mimeType, input)
+        } catch (e: Exception) {
+            newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Asset not found")
+        }
+    }
+
+    private fun addCorsHeaders(response: Response) {
+        response.addHeader("Access-Control-Allow-Origin", "*")
+        response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+        response.addHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range")
+    }
+}

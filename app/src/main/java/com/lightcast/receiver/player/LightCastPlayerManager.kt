@@ -10,6 +10,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -19,6 +20,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import com.lightcast.receiver.PlaybackState
+import java.util.concurrent.CopyOnWriteArrayList
 
 data class TrackInfo(
     val index: Int,
@@ -43,6 +45,9 @@ class LightCastPlayerManager(
     private var currentTitle: String = ""
     private val handler = Handler(Looper.getMainLooper())
     private var isSyncRunning = false
+
+    private val cachedAudioTracks = CopyOnWriteArrayList<TrackInfo>()
+    private val cachedSubtitleTracks = CopyOnWriteArrayList<TrackInfo>()
 
     val isPlaying: Boolean
         get() = exoPlayer?.isPlaying == true
@@ -130,6 +135,10 @@ class LightCastPlayerManager(
                 emitStateUpdate(if (isPlaying) "playing" else "paused")
             }
 
+            override fun onTracksChanged(tracks: Tracks) {
+                updateCachedTracks(tracks)
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 Log.e("LightCastPlayer", "ExoPlayer Error: ${error.message}", error)
                 stopPeriodicSync()
@@ -139,6 +148,44 @@ class LightCastPlayerManager(
         })
 
         playerView.player = exoPlayer
+    }
+
+    private fun updateCachedTracks(tracks: Tracks) {
+        val audioList = mutableListOf<TrackInfo>()
+        val subList = mutableListOf<TrackInfo>()
+
+        var audioIdx = 0
+        var subIdx = 0
+
+        for (group in tracks.groups) {
+            if (group.type == C.TRACK_TYPE_AUDIO) {
+                for (i in 0 until group.length) {
+                    val format = group.getTrackFormat(i)
+                    val isSelected = group.isTrackSelected(i)
+                    val lang = format.language ?: "und"
+                    val label = format.label ?: format.language ?: "Audio ${audioIdx + 1}"
+                    val channelCount = format.channelCount
+                    val channelsStr = if (channelCount > 2) " ($channelCount ch)" else ""
+                    audioList.add(TrackInfo(audioIdx, "$label$channelsStr", lang, isSelected))
+                    audioIdx++
+                }
+            } else if (group.type == C.TRACK_TYPE_TEXT) {
+                for (i in 0 until group.length) {
+                    val format = group.getTrackFormat(i)
+                    val isSelected = group.isTrackSelected(i)
+                    val lang = format.language ?: "und"
+                    val label = format.label ?: format.language ?: "Sottotitoli ${subIdx + 1}"
+                    subList.add(TrackInfo(subIdx, label, lang, isSelected))
+                    subIdx++
+                }
+            }
+        }
+
+        cachedAudioTracks.clear()
+        cachedAudioTracks.addAll(audioList)
+
+        cachedSubtitleTracks.clear()
+        cachedSubtitleTracks.addAll(subList)
     }
 
     fun play(url: String, title: String) {
@@ -156,71 +203,41 @@ class LightCastPlayerManager(
     }
 
     fun getAudioTracks(): List<TrackInfo> {
-        val player = exoPlayer ?: return emptyList()
-        val tracks = player.currentTracks
-        val list = mutableListOf<TrackInfo>()
-        var idx = 0
-        for (group in tracks.groups) {
-            if (group.type == C.TRACK_TYPE_AUDIO) {
-                for (i in 0 until group.length) {
-                    val format = group.getTrackFormat(i)
-                    val isSelected = group.isTrackSelected(i)
-                    val lang = format.language ?: "und"
-                    val label = format.label ?: format.language ?: "Audio ${idx + 1}"
-                    val channelCount = format.channelCount
-                    val channelsStr = if (channelCount > 2) " ($channelCount ch)" else ""
-                    list.add(TrackInfo(idx, "$label$channelsStr", lang, isSelected))
-                    idx++
-                }
-            }
-        }
-        return list
+        return cachedAudioTracks.toList()
     }
 
     fun getSubtitleTracks(): List<TrackInfo> {
-        val player = exoPlayer ?: return emptyList()
-        val tracks = player.currentTracks
-        val list = mutableListOf<TrackInfo>()
-        var idx = 0
-        for (group in tracks.groups) {
-            if (group.type == C.TRACK_TYPE_TEXT) {
-                for (i in 0 until group.length) {
-                    val format = group.getTrackFormat(i)
-                    val isSelected = group.isTrackSelected(i)
-                    val lang = format.language ?: "und"
-                    val label = format.label ?: format.language ?: "Sottotitoli ${idx + 1}"
-                    list.add(TrackInfo(idx, label, lang, isSelected))
-                    idx++
-                }
-            }
-        }
-        return list
+        return cachedSubtitleTracks.toList()
     }
 
     fun selectAudioTrack(targetIndex: Int): String {
-        val player = exoPlayer ?: return ""
-        val tracks = player.currentTracks
-        var idx = 0
-        for (group in tracks.groups) {
-            if (group.type == C.TRACK_TYPE_AUDIO) {
-                for (i in 0 until group.length) {
-                    if (idx == targetIndex) {
-                        val format = group.getTrackFormat(i)
-                        val lang = format.language
-                        val selector = trackSelector ?: return ""
-                        val params = selector.parameters.buildUpon()
-                        if (lang != null) {
-                            params.setPreferredAudioLanguage(lang)
+        var selectedName = ""
+        handler.post {
+            val player = exoPlayer ?: return@post
+            val tracks = player.currentTracks
+            var idx = 0
+            for (group in tracks.groups) {
+                if (group.type == C.TRACK_TYPE_AUDIO) {
+                    for (i in 0 until group.length) {
+                        if (idx == targetIndex) {
+                            val format = group.getTrackFormat(i)
+                            val lang = format.language
+                            val selector = trackSelector ?: return@post
+                            val params = selector.parameters.buildUpon()
+                            if (lang != null) {
+                                params.setPreferredAudioLanguage(lang)
+                            }
+                            params.setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                            selector.setParameters(params)
+                            selectedName = format.label ?: format.language ?: "Audio ${idx + 1}"
+                            return@post
                         }
-                        params.setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
-                        selector.setParameters(params)
-                        return format.label ?: format.language ?: "Audio ${idx + 1}"
+                        idx++
                     }
-                    idx++
                 }
             }
         }
-        return ""
+        return selectedName
     }
 
     fun cycleAudioTrack(): String {
@@ -251,45 +268,51 @@ class LightCastPlayerManager(
     }
 
     fun selectSubtitleTrack(targetIndex: Int): String {
-        val player = exoPlayer ?: return ""
-        val tracks = player.currentTracks
-        var idx = 0
-        for (group in tracks.groups) {
-            if (group.type == C.TRACK_TYPE_TEXT) {
-                for (i in 0 until group.length) {
-                    if (idx == targetIndex) {
-                        val format = group.getTrackFormat(i)
-                        val lang = format.language
-                        val selector = trackSelector ?: return ""
-                        val params = selector.parameters.buildUpon()
-                        if (lang != null) {
-                            params.setPreferredTextLanguage(lang)
+        var selectedName = ""
+        handler.post {
+            val player = exoPlayer ?: return@post
+            val tracks = player.currentTracks
+            var idx = 0
+            for (group in tracks.groups) {
+                if (group.type == C.TRACK_TYPE_TEXT) {
+                    for (i in 0 until group.length) {
+                        if (idx == targetIndex) {
+                            val format = group.getTrackFormat(i)
+                            val lang = format.language
+                            val selector = trackSelector ?: return@post
+                            val params = selector.parameters.buildUpon()
+                            if (lang != null) {
+                                params.setPreferredTextLanguage(lang)
+                            }
+                            params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            selector.setParameters(params)
+                            selectedName = format.label ?: format.language ?: "Sottotitoli ${idx + 1}"
+                            return@post
                         }
-                        params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                        selector.setParameters(params)
-                        return format.label ?: format.language ?: "Sottotitoli ${idx + 1}"
+                        idx++
                     }
-                    idx++
                 }
             }
         }
-        return ""
+        return selectedName
     }
 
     fun disableSubtitles() {
-        val selector = trackSelector ?: return
-        selector.setParameters(
-            selector.parameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-        )
+        handler.post {
+            val selector = trackSelector ?: return@post
+            selector.setParameters(
+                selector.parameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            )
+        }
     }
 
     fun pause() {
-        exoPlayer?.pause()
+        handler.post { exoPlayer?.pause() }
         emitStateUpdate("paused")
     }
 
     fun resume() {
-        exoPlayer?.play()
+        handler.post { exoPlayer?.play() }
         emitStateUpdate("playing")
     }
 
@@ -298,35 +321,47 @@ class LightCastPlayerManager(
     }
 
     fun seekBy(deltaSeconds: Int) {
-        val player = exoPlayer ?: return
-        val newPos = (player.currentPosition + (deltaSeconds * 1000L)).coerceIn(0L, player.duration.coerceAtLeast(0L))
-        player.seekTo(newPos)
-        emitStateUpdate(if (player.isPlaying) "playing" else "paused")
+        handler.post {
+            val player = exoPlayer ?: return@post
+            val newPos = (player.currentPosition + (deltaSeconds * 1000L)).coerceIn(0L, player.duration.coerceAtLeast(0L))
+            player.seekTo(newPos)
+            emitStateUpdate(if (player.isPlaying) "playing" else "paused")
+        }
     }
 
     fun seekTo(seconds: Double) {
-        val player = exoPlayer ?: return
-        val posMs = (seconds * 1000.0).toLong().coerceIn(0L, player.duration.coerceAtLeast(0L))
-        player.seekTo(posMs)
-        emitStateUpdate(if (player.isPlaying) "playing" else "paused")
+        handler.post {
+            val player = exoPlayer ?: return@post
+            val posMs = (seconds * 1000.0).toLong().coerceIn(0L, player.duration.coerceAtLeast(0L))
+            player.seekTo(posMs)
+            emitStateUpdate(if (player.isPlaying) "playing" else "paused")
+        }
     }
 
     fun setVolume(volumeFraction: Float) {
-        exoPlayer?.volume = volumeFraction.coerceIn(0f, 1f)
-        emitStateUpdate(if (isPlaying) "playing" else "paused")
+        handler.post {
+            exoPlayer?.volume = volumeFraction.coerceIn(0f, 1f)
+            emitStateUpdate(if (isPlaying) "playing" else "paused")
+        }
     }
 
     fun stop() {
         stopPeriodicSync()
-        exoPlayer?.stop()
-        exoPlayer?.clearMediaItems()
+        cachedAudioTracks.clear()
+        cachedSubtitleTracks.clear()
+        handler.post {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+        }
         emitStateUpdate("idle")
     }
 
     fun release() {
         stop()
-        exoPlayer?.release()
-        exoPlayer = null
+        handler.post {
+            exoPlayer?.release()
+            exoPlayer = null
+        }
     }
 
     private fun startPeriodicSync() {

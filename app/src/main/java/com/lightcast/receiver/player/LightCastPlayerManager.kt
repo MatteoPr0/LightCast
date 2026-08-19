@@ -23,6 +23,8 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.ui.PlayerView
 import com.lightcast.receiver.PlaybackState
 import java.util.concurrent.CopyOnWriteArrayList
@@ -115,7 +117,11 @@ class LightCastPlayerManager(
             .setReadTimeoutMs(20_000)
 
         val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
-        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+        val extractorsFactory = DefaultExtractorsFactory().apply {
+            setConstantBitrateSeekingEnabled(true)
+            setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES or DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS)
+        }
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory)
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -210,16 +216,19 @@ class LightCastPlayerManager(
     fun play(url: String, title: String) {
         currentTitle = title
         val uri = Uri.parse(url)
-        val lowerUrl = url.lowercase()
+        val path = uri.path?.lowercase() ?: ""
+        val query = uri.query?.lowercase() ?: ""
 
         val mediaItemBuilder = MediaItem.Builder().setUri(uri)
-        if (lowerUrl.contains(".m3u8") || lowerUrl.contains("m3u8") || lowerUrl.contains("hls") || lowerUrl.contains("playlist")) {
+        if (path.endsWith(".m3u8") && !query.contains("format=ts") && !query.contains("format=mp4")) {
             mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_M3U8)
-        } else if (lowerUrl.contains(".mpd") || lowerUrl.contains("dash")) {
+        } else if (path.endsWith(".mpd") && !query.contains("format=ts")) {
             mediaItemBuilder.setMimeType(MimeTypes.APPLICATION_MPD)
-        } else if (lowerUrl.contains(".m4v") || lowerUrl.contains(".mp4")) {
+        } else if (path.endsWith(".ts") || query.contains("format=ts")) {
+            mediaItemBuilder.setMimeType(MimeTypes.VIDEO_MP2T)
+        } else if (path.endsWith(".mp4") || path.endsWith(".m4v") || query.contains("format=mp4")) {
             mediaItemBuilder.setMimeType(MimeTypes.VIDEO_MP4)
-        } else if (lowerUrl.contains(".mkv")) {
+        } else if (path.endsWith(".mkv")) {
             mediaItemBuilder.setMimeType(MimeTypes.VIDEO_MATROSKA)
         }
 

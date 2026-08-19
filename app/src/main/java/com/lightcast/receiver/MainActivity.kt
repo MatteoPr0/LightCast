@@ -15,15 +15,21 @@ import android.view.WindowManager
 import android.webkit.*
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.media3.ui.PlayerView
+import com.lightcast.receiver.player.LightCastPlayerManager
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.URLEncoder
 
-class MainActivity : AppCompatActivity(), LightCastServer.ServerListener {
+class MainActivity : AppCompatActivity(), LightCastServer.ServerListener, LightCastPlayerManager.PlayerStateListener {
     private var webView: WebView? = null
+    private var playerView: PlayerView? = null
+    private var playerTopOverlay: View? = null
+    private var playerMediaTitle: TextView? = null
+    
+    private var playerManager: LightCastPlayerManager? = null
     private var httpServer: LightCastServer? = null
     private val serverPort = 8080
-    private var isPlaying = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,9 +37,16 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener {
         hideSystemUI()
 
         try {
+            setContentView(R.layout.activity_main)
+
+            webView = findViewById(R.id.dashboardWebView)
+            playerView = findViewById(R.id.exoPlayerView)
+            playerTopOverlay = findViewById(R.id.playerTopOverlay)
+            playerMediaTitle = findViewById(R.id.playerMediaTitle)
+
             startHttpServer()
             setupOptimizedWebView()
-            setContentView(webView)
+            setupExoPlayer()
 
             try {
                 startService(Intent(this, CastDiscoveryService::class.java))
@@ -43,17 +56,10 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener {
             val deviceName = Build.MODEL ?: "LightCast TV"
             val encodedName = URLEncoder.encode(deviceName, "UTF-8")
             val targetUrl = "file:///android_asset/receiver.html?ip=$ip&port=$serverPort&name=$encodedName"
-            
+
             webView?.loadUrl(targetUrl)
         } catch (e: Exception) {
-            val errorView = TextView(this).apply {
-                text = "LightCast Init Error:\n" + e.message
-                setTextColor(0xFFFF0000.toInt())
-                textSize = 18f
-                setPadding(32, 32, 32, 32)
-                setBackgroundColor(0xFF000000.toInt())
-            }
-            setContentView(errorView)
+            Log.e("MainActivity", "Error in onCreate: ${e.message}", e)
         }
     }
 
@@ -61,15 +67,24 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener {
         try {
             httpServer = LightCastServer(serverPort, this, this)
             httpServer?.start()
-            Log.d("MainActivity", "LightCast Server started on port $serverPort")
+            Log.d("MainActivity", "LightCast Server running on port $serverPort")
         } catch (e: Exception) {
             Log.e("MainActivity", "Failed to start HTTP server: ${e.message}", e)
         }
     }
 
+    private fun setupExoPlayer() {
+        playerView?.let { pv ->
+            playerManager = LightCastPlayerManager(this, pv, this)
+            pv.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+                playerTopOverlay?.visibility = visibility
+            })
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupOptimizedWebView() {
-        webView = WebView(this).apply {
+        webView?.apply {
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
             setBackgroundColor(0xFF000000.toInt())
         }
@@ -93,9 +108,7 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener {
             }
         }
 
-        // Bridge to receive playback updates from Javascript
         val bridge = LightCastBridge { state ->
-            isPlaying = (state.state == "playing")
             httpServer?.playbackState = state
         }
         webView?.addJavascriptInterface(bridge, "AndroidBridge")
@@ -116,24 +129,80 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener {
 
     override fun onCastMedia(url: String, title: String, type: String) {
         runOnUiThread {
-            val safeUrl = url.replace("'", "\\'")
-            val safeTitle = title.replace("'", "\\'")
-            val safeType = type.replace("'", "\\'")
-            webView?.evaluateJavascript("window.playMedia('$safeUrl', '$safeTitle', '$safeType')", null)
+            if (type.startsWith("image/")) {
+                stopPlaybackAndShowDashboard()
+                val safeUrl = url.replace("'", "\\'")
+                val safeTitle = title.replace("'", "\\'")
+                webView?.evaluateJavascript("window.playMedia('$safeUrl', '$safeTitle', '$type')", null)
+            } else {
+                webView?.visibility = View.GONE
+                playerView?.visibility = View.VISIBLE
+                playerMediaTitle?.text = title
+                playerTopOverlay?.visibility = View.VISIBLE
+
+                playerManager?.play(url, title)
+            }
         }
     }
 
     override fun onControlMedia(action: String, value: Any?) {
         runOnUiThread {
-            val jsVal = when (value) {
-                is Number -> value.toString()
-                is String -> "'$value'"
-                is Boolean -> value.toString()
-                null -> "null"
-                else -> "'$value'"
+            if (playerView?.visibility == View.VISIBLE) {
+                when (action) {
+                    "play" -> playerManager?.resume()
+                    "pause" -> playerManager?.pause()
+                    "toggle" -> playerManager?.togglePlayPause()
+                    "seek" -> {
+                        val delta = (value as? Number)?.toInt() ?: 10
+                        playerManager?.seekBy(delta)
+                    }
+                    "seekTo" -> {
+                        val sec = (value as? Number)?.toDouble() ?: 0.0
+                        playerManager?.seekTo(sec)
+                    }
+                    "volume" -> {
+                        val vol = (value as? Number)?.toFloat() ?: 1f
+                        playerManager?.setVolume(vol)
+                    }
+                    "stop" -> stopPlaybackAndShowDashboard()
+                }
+            } else {
+                val jsVal = when (value) {
+                    is Number -> value.toString()
+                    is String -> "'$value'"
+                    is Boolean -> value.toString()
+                    null -> "null"
+                    else -> "'$value'"
+                }
+                webView?.evaluateJavascript("window.controlMedia('$action', $jsVal)", null)
             }
-            webView?.evaluateJavascript("window.controlMedia('$action', $jsVal)", null)
         }
+    }
+
+    override fun onPlayerStateChanged(state: PlaybackState) {
+        httpServer?.playbackState = state
+    }
+
+    override fun onPlayerEnded() {
+        runOnUiThread {
+            stopPlaybackAndShowDashboard()
+        }
+    }
+
+    override fun onPlayerError(errorMessage: String) {
+        runOnUiThread {
+            Log.e("MainActivity", "Playback error: $errorMessage")
+            stopPlaybackAndShowDashboard()
+        }
+    }
+
+    private fun stopPlaybackAndShowDashboard() {
+        playerManager?.stop()
+        playerView?.visibility = View.GONE
+        playerTopOverlay?.visibility = View.GONE
+        webView?.visibility = View.VISIBLE
+
+        httpServer?.playbackState = PlaybackState(state = "idle")
     }
 
     private fun getLocalIpAddress(): String {
@@ -169,34 +238,34 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                webView?.evaluateJavascript("window.controlMedia('toggle', null)", null)
-                return true
-            }
-            KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                webView?.evaluateJavascript("window.controlMedia('play', null)", null)
-                return true
-            }
-            KeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                webView?.evaluateJavascript("window.controlMedia('pause', null)", null)
-                return true
-            }
-            KeyEvent.KEYCODE_MEDIA_STOP -> {
-                webView?.evaluateJavascript("window.controlMedia('stop', null)", null)
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                webView?.evaluateJavascript("window.controlMedia('seek', 10)", null)
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                webView?.evaluateJavascript("window.controlMedia('seek', -10)", null)
-                return true
-            }
-            KeyEvent.KEYCODE_BACK -> {
-                if (isPlaying) {
-                    webView?.evaluateJavascript("window.controlMedia('stop', null)", null)
+        if (playerView?.visibility == View.VISIBLE) {
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                    playerManager?.togglePlayPause()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                    playerManager?.resume()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                    playerManager?.pause()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_STOP -> {
+                    stopPlaybackAndShowDashboard()
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                    playerManager?.seekBy(10)
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                    playerManager?.seekBy(-10)
+                    return true
+                }
+                KeyEvent.KEYCODE_BACK -> {
+                    stopPlaybackAndShowDashboard()
                     return true
                 }
             }
@@ -223,6 +292,9 @@ class MainActivity : AppCompatActivity(), LightCastServer.ServerListener {
     }
 
     override fun onDestroy() {
+        try {
+            playerManager?.release()
+        } catch (_: Exception) {}
         try {
             httpServer?.stop()
         } catch (_: Exception) {}

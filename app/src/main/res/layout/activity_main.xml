@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootContainer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Standby Dashboard & QR Code Web Interface -->
+    <WebView
+        android:id="@+id/dashboardWebView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000" />
+
+    <!-- High-Performance Hardware-Accelerated Native ExoPlayer -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/exoPlayerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone"
+        app:surface_type="surface_view"
+        app:show_buffering="when_playing"
+        app:resize_mode="fit"
+        app:use_controller="true"
+        app:controller_timeout_ms="3500"
+        app:show_timeout="3500"
+        app:animation_enabled="true"
+        app:show_subtitle_button="true" />
+
+    <!-- Top Media Title OSD for ExoPlayer -->
+    <LinearLayout
+        android:id="@+id/playerTopOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="48dp"
+        android:paddingEnd="48dp"
+        android:paddingTop="32dp"
+        android:paddingBottom="24dp"
+        android:background="@drawable/osd_gradient_top"
+        android:visibility="gone"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/playerMediaTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Riproduzione in corso"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:shadowColor="#80000000"
+            android:shadowDx="0"
+            android:shadowDy="2"
+            android:shadowRadius="6"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/playerCodecBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="HW DEC • 60 FPS"
+            android:textColor="#34D399"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:background="@drawable/badge_pill_bg"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp" />
+    </LinearLayout>
+
+</FrameLayout>

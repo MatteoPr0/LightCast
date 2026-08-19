@@ -84,19 +84,41 @@ class DlnaServer(
                 ssdpSocket?.receive(packet) ?: break
 
                 val msg = String(packet.data, packet.offset, packet.length)
-                if (msg.startsWith("M-SEARCH") && (msg.contains("ssdp:all") || msg.contains("MediaRenderer") || msg.contains("AVTransport") || msg.contains("upnp:rootdevice"))) {
+                if (msg.startsWith("M-SEARCH")) {
                     val localIp = getLocalIp()
-                    val response = "HTTP/1.1 200 OK\r\n" +
-                            "CACHE-CONTROL: max-age=1800\r\n" +
-                            "EXT:\r\n" +
-                            "LOCATION: http://$localIp:8080/dlna/device-desc.xml\r\n" +
-                            "SERVER: Android/13 UPnP/1.0 LightCast/2.0\r\n" +
-                            "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n" +
-                            "USN: uuid:$uuid::urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
 
-                    val respBytes = response.toByteArray(Charsets.UTF_8)
-                    val respPacket = DatagramPacket(respBytes, respBytes.size, packet.address, packet.port)
-                    ssdpSocket?.send(respPacket)
+                    if (msg.contains("dial") || msg.contains("ssdp:all") || msg.contains("rootdevice")) {
+                        val dialResp = "HTTP/1.1 200 OK\r\n" +
+                                "CACHE-CONTROL: max-age=1800\r\n" +
+                                "EXT:\r\n" +
+                                "LOCATION: http://$localIp:8008/ssdp/device-desc.xml\r\n" +
+                                "SERVER: Linux/3.14.0 UPnP/1.0 LightCast/1.0\r\n" +
+                                "ST: urn:dial-multicast:org:service:dial:1\r\n" +
+                                "USN: uuid:$uuid::urn:dial-multicast:org:service:dial:1\r\n" +
+                                "BOOTID.UPNP.ORG: 1\r\n" +
+                                "CONFIGID.UPNP.ORG: 1\r\n" +
+                                "WAKEUP: MAC=FA:8F:CA:75:68:DE;Timeout=10\r\n\r\n"
+
+                        val b = dialResp.toByteArray(Charsets.UTF_8)
+                        try {
+                            ssdpSocket?.send(DatagramPacket(b, b.size, packet.address, packet.port))
+                        } catch (_: Exception) {}
+                    }
+
+                    if (msg.contains("MediaRenderer") || msg.contains("AVTransport") || msg.contains("ssdp:all")) {
+                        val dlnaResp = "HTTP/1.1 200 OK\r\n" +
+                                "CACHE-CONTROL: max-age=1800\r\n" +
+                                "EXT:\r\n" +
+                                "LOCATION: http://$localIp:8080/dlna/device-desc.xml\r\n" +
+                                "SERVER: Android/13 UPnP/1.0 LightCast/2.0\r\n" +
+                                "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n" +
+                                "USN: uuid:$uuid::urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
+
+                        val b = dlnaResp.toByteArray(Charsets.UTF_8)
+                        try {
+                            ssdpSocket?.send(DatagramPacket(b, b.size, packet.address, packet.port))
+                        } catch (_: Exception) {}
+                    }
                 }
             }
         } catch (e: Exception) {

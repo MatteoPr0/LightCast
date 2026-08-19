@@ -1,9 +1,12 @@
 package com.lightcast.receiver.cast
 
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONObject
+import java.net.Inet4Address
+import java.net.NetworkInterface
 
 class EurekaServer(
     val port: Int = 8008,
@@ -22,10 +25,9 @@ class EurekaServer(
         }
 
         try {
+            val localIp = getLocalIpAddress()
             val response = when {
                 uri.startsWith("/setup/eureka_info") -> {
-                    val host = session.headers["host"] ?: "127.0.0.1"
-                    val ip = host.substringBefore(':')
                     val json = JSONObject().apply {
                         put("bssid", "fa:8f:ca:75:68:de")
                         put("build_version", "1.56.281627")
@@ -34,7 +36,7 @@ class EurekaServer(
                         put("connected", true)
                         put("ethernet_connected", false)
                         put("hotspot_bssid", "fa:8f:ca:75:68:de")
-                        put("ip_address", ip)
+                        put("ip_address", localIp)
                         put("locale", "it-IT")
                         put("location", JSONObject().apply {
                             put("country_code", "IT")
@@ -46,7 +48,7 @@ class EurekaServer(
                         put("net", JSONObject().apply {
                             put("control_port", 8009)
                             put("ethernet_connected", false)
-                            put("ip_address", ip)
+                            put("ip_address", localIp)
                             put("online", true)
                         })
                         put("noise_level", -90)
@@ -61,7 +63,7 @@ class EurekaServer(
                             put("cast_build_revision", "1.56.281627")
                             put("connected", true)
                             put("ethernet_connected", false)
-                            put("ip_address", ip)
+                            put("ip_address", localIp)
                             put("online", true)
                             put("ssid", "LightCast")
                             put("state", 0)
@@ -85,8 +87,6 @@ class EurekaServer(
                     serveAsset("qrcode.min.js", "image/png")
                 }
                 uri == "/dd.xml" || uri == "/ssdp/device-desc.xml" -> {
-                    val host = session.headers["host"] ?: "127.0.0.1"
-                    val ip = host.substringBefore(':')
                     val xml = """<?xml version="1.0"?>
 <root xmlns="urn:schemas-upnp-org:device-1-0">
   <specVersion>
@@ -111,22 +111,26 @@ class EurekaServer(
   </device>
 </root>"""
                     val res = newFixedLengthResponse(Response.Status.OK, "application/xml", xml)
-                    res.addHeader("Application-URL", "http://$ip:8008/apps/")
+                    res.addHeader("Application-URL", "http://$localIp:$port/apps/")
                     res
                 }
                 uri.startsWith("/apps/") -> {
-                    val appName = uri.removePrefix("/apps/")
+                    val appName = uri.removePrefix("/apps/").substringBefore('/')
                     if (method == Method.GET) {
                         val appXml = """<?xml version="1.0" encoding="UTF-8"?>
 <service xmlns="urn:dial-multicast:org:service:dial:1" dialVer="1.7">
   <name>$appName</name>
   <options allowStop="true"/>
-  <state>stopped</state>
+  <state>running</state>
+  <link rel="run" href="run"/>
+  <additionalData>
+    <cast:capabilities xmlns:cast="urn:google:cast">video_out,audio_out</cast:capabilities>
+  </additionalData>
 </service>"""
                         newFixedLengthResponse(Response.Status.OK, "application/xml", appXml)
                     } else if (method == Method.POST) {
                         val res = newFixedLengthResponse(Response.Status.CREATED, "text/plain", "")
-                        res.addHeader("Location", "http://${session.headers["host"] ?: "127.0.0.1:$port"}/apps/$appName/run")
+                        res.addHeader("Location", "http://$localIp:$port/apps/$appName/run")
                         res
                     } else {
                         newFixedLengthResponse(Response.Status.OK, "text/plain", "OK")
@@ -159,5 +163,37 @@ class EurekaServer(
         response.addHeader("Access-Control-Allow-Origin", "*")
         response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
         response.addHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range")
+    }
+
+    private fun getLocalIpAddress(): String {
+        try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val ipInt = wifiManager.connectionInfo.ipAddress
+            if (ipInt != 0) {
+                return String.format(
+                    "%d.%d.%d.%d",
+                    ipInt and 0xff,
+                    ipInt shr 8 and 0xff,
+                    ipInt shr 16 and 0xff,
+                    ipInt shr 24 and 0xff
+                )
+            }
+        } catch (_: Exception) {}
+
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                val addresses = iface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val addr = addresses.nextElement()
+                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                        return addr.hostAddress ?: "127.0.0.1"
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return "127.0.0.1"
     }
 }

@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity(),
             playerTopOverlay = findViewById(R.id.playerTopOverlay)
             playerMediaTitle = findViewById(R.id.playerMediaTitle)
 
-            val deviceName = Build.MODEL ?: "LightCast TV"
+            val deviceName = "LightCast TV"
 
             startHttpServer()
             startEurekaServer(deviceName)

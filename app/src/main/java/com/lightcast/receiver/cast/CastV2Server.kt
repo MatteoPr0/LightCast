@@ -52,6 +52,12 @@ class CastV2Server(
                 serverSocket?.needClientAuth = false
                 serverSocket?.wantClientAuth = false
 
+                // Cast compatibility test:
+                // WVC offers TLS 1.3 + TLS 1.2, but currently closes
+                // immediately after our TLS 1.3 server flight.
+                // Force TLS 1.2 so we can isolate that behavior.
+                serverSocket?.enabledProtocols = arrayOf("TLSv1.2")
+
                 Log.d("CastV2Server", "Cast V2 TLS Server listening on port $port")
 
                 while (isRunning) {

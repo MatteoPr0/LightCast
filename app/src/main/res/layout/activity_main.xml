@@ -23,11 +23,7 @@
         app:surface_type="surface_view"
         app:show_buffering="when_playing"
         app:resize_mode="fit"
-        app:use_controller="true"
-        app:controller_timeout_ms="3500"
-        app:show_timeout="3500"
-        app:animation_enabled="true"
-        app:show_subtitle_button="true" />
+        app:use_controller="true" />
 
     <!-- Top Media Title OSD for ExoPlayer -->
     <LinearLayout

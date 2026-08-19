@@ -95,6 +95,7 @@ class MainActivity : AppCompatActivity(),
 
     private fun setupExoPlayer() {
         playerView?.let { pv ->
+            pv.controllerShowTimeoutMs = 3500
             playerManager = LightCastPlayerManager(this, pv, this)
             pv.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
                 playerTopOverlay?.visibility = visibility

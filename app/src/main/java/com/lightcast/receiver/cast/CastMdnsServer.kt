@@ -8,6 +8,7 @@ import java.io.DataOutputStream
 import java.net.DatagramPacket
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.MulticastSocket
 import java.net.NetworkInterface
 import java.util.concurrent.Executors
@@ -18,7 +19,7 @@ class CastMdnsServer(
     private val castPort: Int = 8009
 ) {
     private var isRunning = false
-    private val executor = Executors.newSingleThreadExecutor()
+    private val executor = Executors.newCachedThreadPool()
     private var socket: MulticastSocket? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -35,12 +36,26 @@ class CastMdnsServer(
                 }
 
                 val group = InetAddress.getByName("224.0.0.251")
+                val wlanIface = getActiveWlanInterface()
+
                 socket = MulticastSocket(5353).apply {
                     reuseAddress = true
+                    timeToLive = 255
                     try {
+                        loopbackMode = true // Disable looping packets back to self
+                    } catch (_: Exception) {}
+
+                    if (wlanIface != null) {
+                        try {
+                            networkInterface = wlanIface
+                            joinGroup(InetSocketAddress(group, 5353), wlanIface)
+                            Log.d("CastMdnsServer", "Joined 224.0.0.251 on interface ${wlanIface.name}")
+                        } catch (e: Exception) {
+                            Log.w("CastMdnsServer", "joinGroup with iface error: ${e.message}")
+                            joinGroup(group)
+                        }
+                    } else {
                         joinGroup(group)
-                    } catch (e: Exception) {
-                        Log.w("CastMdnsServer", "joinGroup: ${e.message}")
                     }
                 }
 
@@ -193,6 +208,22 @@ class CastMdnsServer(
             dos.write(b)
         }
         dos.writeByte(0) // Root
+    }
+
+    private fun getActiveWlanInterface(): NetworkInterface? {
+        try {
+            val iface = NetworkInterface.getByName("wlan0")
+            if (iface != null && iface.isUp) return iface
+
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val i = interfaces.nextElement()
+                if (i.isUp && !i.isLoopback && (i.name.startsWith("wlan") || i.name.startsWith("eth") || i.name.startsWith("en"))) {
+                    return i
+                }
+            }
+        } catch (_: Exception) {}
+        return null
     }
 
     private fun getLocalIpAddress(): String {

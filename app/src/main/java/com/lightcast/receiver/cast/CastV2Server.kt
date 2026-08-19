@@ -48,6 +48,7 @@ class CastV2Server(
                 val serverFactory = sslContext.serverSocketFactory
                 serverSocket = serverFactory.createServerSocket(port) as SSLServerSocket
                 serverSocket?.needClientAuth = false
+                serverSocket?.wantClientAuth = false
 
                 Log.d("CastV2Server", "Cast V2 TLS Server listening on port $port")
 
@@ -92,7 +93,7 @@ class CastV2Server(
                 handleCastMessage(castMsg, clientSession)
             }
         } catch (_: IOException) {
-            // Client disconnected normally
+            // Client disconnected
         } catch (e: Exception) {
             Log.e("CastV2Server", "Client error: ${e.message}")
         } finally {
@@ -107,7 +108,7 @@ class CastV2Server(
         }
 
         val payloadStr = msg.payloadUtf8 ?: return
-        Log.d("CastV2Server", "Received [${msg.namespace}] from ${msg.sourceId}: $payloadStr")
+        Log.d("CastV2Server", "Received [${msg.namespace}] (dest: ${msg.destinationId}) from ${msg.sourceId}: $payloadStr")
 
         try {
             val json = JSONObject(payloadStr)
@@ -117,7 +118,7 @@ class CastV2Server(
             when (msg.namespace) {
                 "urn:x-cast:com.google.cast.tp.connection" -> {
                     if (type == "CONNECT") {
-                        // Send system sender ready event
+                        // Accept connection to receiver-0 or to transportId
                         val sysMsg = CastMessage(
                             protocolVersion = 0,
                             sourceId = "SystemSender",
@@ -168,6 +169,16 @@ class CastV2Server(
                             currentDisplayName = if (currentAppId == "CC1AD845") "Default Media Receiver" else deviceName
                             currentSessionId = UUID.randomUUID().toString()
                             isIdle = false
+
+                            val readyMsg = CastMessage(
+                                protocolVersion = 0,
+                                sourceId = "SystemSender",
+                                destinationId = msg.sourceId,
+                                namespace = "urn:x-cast:com.google.cast.system",
+                                payloadType = 0,
+                                payloadUtf8 = """{"type":"ready","launchingSenderId":"${msg.sourceId}"}"""
+                            )
+                            client.sendMessage(readyMsg)
 
                             sendReceiverStatus(msg.sourceId, client, requestId)
                         }
@@ -257,7 +268,7 @@ class CastV2Server(
                     payloadBinary = authRespBytes
                 )
                 client.sendMessage(authMsg)
-                Log.d("CastV2Server", "Successfully replied to AuthChallenge on port 8009")
+                Log.d("CastV2Server", "Successfully sent AuthResponse to ${msg.sourceId}")
             }
         } catch (e: Exception) {
             Log.e("CastV2Server", "Error handling device auth: ${e.message}")
@@ -376,7 +387,7 @@ class CastV2Server(
 
         val resp = CastMessage(
             protocolVersion = 0,
-            sourceId = "receiver-0",
+            sourceId = currentSessionId, // CRITICAL: Respond with the active session transportId
             destinationId = destinationId,
             namespace = "urn:x-cast:com.google.cast.media",
             payloadType = 0,

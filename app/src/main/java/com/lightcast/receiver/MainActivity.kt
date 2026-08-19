@@ -225,6 +225,7 @@ class MainActivity : AppCompatActivity(),
     override fun onPlayerError(errorMessage: String) {
         runOnUiThread {
             Log.e("MainActivity", "Playback error: $errorMessage")
+            android.widget.Toast.makeText(this, "Errore stream: $errorMessage", android.widget.Toast.LENGTH_LONG).show()
             stopPlaybackAndShowDashboard()
         }
     }

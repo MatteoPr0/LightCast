@@ -68,7 +68,7 @@ class LightCastPlayerManager(
     init {
         initializePlayer()
     }
-
+    private fun initializePlayer() {
         val renderersFactory = DefaultRenderersFactory(context).apply {
             setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
             setEnableDecoderFallback(true)

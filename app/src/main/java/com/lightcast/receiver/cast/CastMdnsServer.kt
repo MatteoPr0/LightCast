@@ -12,6 +12,8 @@ import java.net.InetSocketAddress
 import java.net.MulticastSocket
 import java.net.NetworkInterface
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 class CastMdnsServer(
     private val context: Context,
@@ -20,6 +22,7 @@ class CastMdnsServer(
 ) {
     private var isRunning = false
     private val executor = Executors.newCachedThreadPool()
+    private var scheduler: ScheduledExecutorService? = null
     private var socket: MulticastSocket? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -61,6 +64,20 @@ class CastMdnsServer(
 
                 Log.d("CastMdnsServer", "mDNS Multicast Server listening on 224.0.0.251:5353")
 
+                // Start periodic beacon every 4 seconds to populate sender caches
+                scheduler = Executors.newSingleThreadScheduledExecutor().apply {
+                    scheduleWithFixedDelay({
+                        if (isRunning) {
+                            try {
+                                val localIp = getLocalIpAddress()
+                                val responseData = buildMdnsResponse(deviceName, localIp, castPort)
+                                val beaconPacket = DatagramPacket(responseData, responseData.size, group, 5353)
+                                socket?.send(beaconPacket)
+                            } catch (_: Exception) {}
+                        }
+                    }, 1, 4, TimeUnit.SECONDS)
+                }
+
                 val buffer = ByteArray(2048)
                 while (isRunning) {
                     val packet = DatagramPacket(buffer, buffer.size)
@@ -98,6 +115,9 @@ class CastMdnsServer(
     fun stop() {
         isRunning = false
         try {
+            scheduler?.shutdownNow()
+        } catch (_: Exception) {}
+        try {
             socket?.close()
         } catch (_: Exception) {}
         try {
@@ -126,8 +146,6 @@ class CastMdnsServer(
         val dos = DataOutputStream(bos)
 
         val serviceType = "_googlecast._tcp.local"
-        val subtype = "_display._sub._googlecast._tcp.local"
-        val dnsSd = "_services._dns-sd._udp.local"
         val safeName = name.replace(" ", "-")
         val instanceName = "$safeName.$serviceType"
         val hostName = "$safeName.local"
@@ -136,44 +154,22 @@ class CastMdnsServer(
         dos.writeShort(0x0000) // Transaction ID
         dos.writeShort(0x8400) // Flags: Response + Authoritative
         dos.writeShort(0x0000) // Questions
-        dos.writeShort(0x0003) // Answers: 3 (PTR Records)
+        dos.writeShort(0x0001) // Answers: 1 (PTR Record)
         dos.writeShort(0x0000) // Authority
         dos.writeShort(0x0003) // Additional: 3 (SRV, TXT, A Records)
 
-        // 1. PTR Record 1: _googlecast._tcp.local -> instanceName (Class 0x0001 per RFC 6762)
+        // 1. PTR Record: _googlecast._tcp.local -> instanceName (Class 0x0001 per RFC 6762)
         writeDnsName(dos, serviceType)
         dos.writeShort(12) // Type: PTR
         dos.writeShort(0x0001) // Class: IN (Shared, no flush bit)
         dos.writeInt(120) // TTL: 120s
-        val ptrData1 = ByteArrayOutputStream()
-        writeDnsName(DataOutputStream(ptrData1), instanceName)
-        val ptrBytes1 = ptrData1.toByteArray()
-        dos.writeShort(ptrBytes1.size)
-        dos.write(ptrBytes1)
+        val ptrData = ByteArrayOutputStream()
+        writeDnsName(DataOutputStream(ptrData), instanceName)
+        val ptrBytes = ptrData.toByteArray()
+        dos.writeShort(ptrBytes.size)
+        dos.write(ptrBytes)
 
-        // 2. PTR Record 2: _display._sub._googlecast._tcp.local -> instanceName
-        writeDnsName(dos, subtype)
-        dos.writeShort(12) // Type: PTR
-        dos.writeShort(0x0001) // Class: IN
-        dos.writeInt(120)
-        val ptrData2 = ByteArrayOutputStream()
-        writeDnsName(DataOutputStream(ptrData2), instanceName)
-        val ptrBytes2 = ptrData2.toByteArray()
-        dos.writeShort(ptrBytes2.size)
-        dos.write(ptrBytes2)
-
-        // 3. PTR Record 3: _services._dns-sd._udp.local -> _googlecast._tcp.local
-        writeDnsName(dos, dnsSd)
-        dos.writeShort(12) // Type: PTR
-        dos.writeShort(0x0001) // Class: IN
-        dos.writeInt(120)
-        val ptrData3 = ByteArrayOutputStream()
-        writeDnsName(DataOutputStream(ptrData3), serviceType)
-        val ptrBytes3 = ptrData3.toByteArray()
-        dos.writeShort(ptrBytes3.size)
-        dos.write(ptrBytes3)
-
-        // 4. SRV Record: instanceName -> hostName:port
+        // 2. SRV Record: instanceName -> hostName:port
         writeDnsName(dos, instanceName)
         dos.writeShort(33) // Type: SRV
         dos.writeShort(0x8001) // Class: IN, Flush Cache
@@ -188,7 +184,7 @@ class CastMdnsServer(
         dos.writeShort(srvBytes.size)
         dos.write(srvBytes)
 
-        // 5. TXT Record: instanceName -> attributes
+        // 3. TXT Record: instanceName -> attributes
         writeDnsName(dos, instanceName)
         dos.writeShort(16) // Type: TXT
         dos.writeShort(0x8001)
@@ -217,7 +213,7 @@ class CastMdnsServer(
         dos.writeShort(txtBytes.size)
         dos.write(txtBytes)
 
-        // 6. A Record: hostName -> IP
+        // 4. A Record: hostName -> IP
         writeDnsName(dos, hostName)
         dos.writeShort(1) // Type: A
         dos.writeShort(0x8001)

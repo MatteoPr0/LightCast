@@ -8,6 +8,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
 import java.net.Socket
+import java.security.Signature
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -29,8 +30,10 @@ class CastV2Server(
     private val threadPool = Executors.newCachedThreadPool()
     private val activeClients = ConcurrentHashMap<String, ClientSession>()
     
-    private var currentSessionId: String? = null
-    private var currentAppId: String = "CC1AD845" // Default Media Receiver
+    private var currentSessionId: String = "9bdf5c17-1eed-4c8b-ad70-c004f83bf947"
+    private var currentAppId: String = "E8C28D3C" // Backdrop
+    private var currentDisplayName: String = "Backdrop"
+    private var isIdle = true
     private var currentMediaSessionId = 1
     private var currentVolume = 1.0
     private var isMuted = false
@@ -88,7 +91,7 @@ class CastV2Server(
                 activeClients[castMsg.sourceId] = clientSession
                 handleCastMessage(castMsg, clientSession)
             }
-        } catch (e: IOException) {
+        } catch (_: IOException) {
             // Client disconnected normally
         } catch (e: Exception) {
             Log.e("CastV2Server", "Client error: ${e.message}")
@@ -98,8 +101,13 @@ class CastV2Server(
     }
 
     private fun handleCastMessage(msg: CastMessage, client: ClientSession) {
+        if (msg.namespace == "urn:x-cast:com.google.cast.tp.deviceauth") {
+            handleDeviceAuth(msg, client)
+            return
+        }
+
         val payloadStr = msg.payloadUtf8 ?: return
-        Log.d("CastV2Server", "Received [${msg.namespace}]: $payloadStr")
+        Log.d("CastV2Server", "Received [${msg.namespace}] from ${msg.sourceId}: $payloadStr")
 
         try {
             val json = JSONObject(payloadStr)
@@ -109,6 +117,27 @@ class CastV2Server(
             when (msg.namespace) {
                 "urn:x-cast:com.google.cast.tp.connection" -> {
                     if (type == "CONNECT") {
+                        // Send system sender ready event
+                        val sysMsg = CastMessage(
+                            protocolVersion = 0,
+                            sourceId = "SystemSender",
+                            destinationId = msg.sourceId,
+                            namespace = "urn:x-cast:com.google.cast.system",
+                            payloadType = 0,
+                            payloadUtf8 = """{"type":"ready","launchingSenderId":"${msg.sourceId}"}"""
+                        )
+                        client.sendMessage(sysMsg)
+
+                        val connectEvent = CastMessage(
+                            protocolVersion = 0,
+                            sourceId = "SystemSender",
+                            destinationId = msg.sourceId,
+                            namespace = "urn:x-cast:com.google.cast.system",
+                            payloadType = 0,
+                            payloadUtf8 = """{"type":"senderconnected","senderId":"${msg.sourceId}"}"""
+                        )
+                        client.sendMessage(connectEvent)
+
                         sendReceiverStatus(msg.sourceId, client, requestId)
                     } else if (type == "CLOSE") {
                         client.close()
@@ -136,11 +165,16 @@ class CastV2Server(
                         }
                         "LAUNCH" -> {
                             currentAppId = json.optString("appId", "CC1AD845")
+                            currentDisplayName = if (currentAppId == "CC1AD845") "Default Media Receiver" else deviceName
                             currentSessionId = UUID.randomUUID().toString()
+                            isIdle = false
+
                             sendReceiverStatus(msg.sourceId, client, requestId)
                         }
                         "STOP" -> {
-                            currentSessionId = null
+                            currentAppId = "E8C28D3C"
+                            currentDisplayName = "Backdrop"
+                            isIdle = true
                             listener.onControlMedia("stop", null)
                             sendReceiverStatus(msg.sourceId, client, requestId)
                         }
@@ -172,6 +206,7 @@ class CastV2Server(
 
                             if (contentId.isNotEmpty()) {
                                 currentMediaSessionId++
+                                isIdle = false
                                 listener.onCastMedia(contentId, title, contentType)
                                 sendMediaStatus(msg.sourceId, client, requestId, "PLAYING", contentId, title, contentType)
                             }
@@ -194,22 +229,38 @@ class CastV2Server(
                         }
                     }
                 }
-
-                "urn:x-cast:com.google.cast.tp.deviceauth" -> {
-                    // Send minimal auth challenge response if requested
-                    val authResp = CastMessage(
-                        protocolVersion = 0,
-                        sourceId = msg.destinationId,
-                        destinationId = msg.sourceId,
-                        namespace = "urn:x-cast:com.google.cast.tp.deviceauth",
-                        payloadType = 0,
-                        payloadUtf8 = """{"type":"DEVICE_AUTH"}"""
-                    )
-                    client.sendMessage(authResp)
-                }
             }
         } catch (e: Exception) {
             Log.e("CastV2Server", "Error parsing message: ${e.message}", e)
+        }
+    }
+
+    private fun handleDeviceAuth(msg: CastMessage, client: ClientSession) {
+        try {
+            val privateKey = CastCertificateGenerator.privateKey
+            val certDer = CastCertificateGenerator.certificateDer
+
+            if (privateKey != null && certDer != null) {
+                val challengeBytes = msg.payloadBinary ?: msg.payloadUtf8?.toByteArray() ?: ByteArray(16)
+                val sig = Signature.getInstance("SHA256withRSA").apply {
+                    initSign(privateKey)
+                    update(challengeBytes)
+                }.sign()
+
+                val authRespBytes = CastMessage.buildAuthResponse(sig, certDer)
+                val authMsg = CastMessage(
+                    protocolVersion = 0,
+                    sourceId = msg.destinationId,
+                    destinationId = msg.sourceId,
+                    namespace = "urn:x-cast:com.google.cast.tp.deviceauth",
+                    payloadType = 1, // BINARY
+                    payloadBinary = authRespBytes
+                )
+                client.sendMessage(authMsg)
+                Log.d("CastV2Server", "Successfully replied to AuthChallenge on port 8009")
+            }
+        } catch (e: Exception) {
+            Log.e("CastV2Server", "Error handling device auth: ${e.message}")
         }
     }
 
@@ -227,22 +278,23 @@ class CastV2Server(
                 put("volume", volumeObj)
 
                 val applications = JSONArray()
-                if (currentSessionId != null) {
-                    val app = JSONObject().apply {
-                        put("appId", currentAppId)
-                        put("displayName", deviceName)
-                        put("isIdleScreen", false)
-                        put("sessionId", currentSessionId)
-                        put("statusText", "LightCast Running")
-                        put("transportId", currentSessionId)
-                        val nsArray = JSONArray().apply {
-                            put(JSONObject().apply { put("name", "urn:x-cast:com.google.cast.media") })
-                            put(JSONObject().apply { put("name", "urn:x-cast:com.google.cast.tp.connection") })
-                        }
-                        put("namespaces", nsArray)
+                val app = JSONObject().apply {
+                    put("appId", currentAppId)
+                    put("displayName", currentDisplayName)
+                    put("isIdleScreen", isIdle)
+                    put("sessionId", currentSessionId)
+                    put("statusText", if (isIdle) "Pronto alla trasmissione" else "Riproduzione in corso")
+                    put("transportId", currentSessionId)
+                    val nsArray = JSONArray().apply {
+                        put(JSONObject().apply { put("name", "urn:x-cast:com.google.cast.media") })
+                        put(JSONObject().apply { put("name", "urn:x-cast:com.google.cast.cac") })
+                        put(JSONObject().apply { put("name", "urn:x-cast:com.google.cast.system") })
+                        put(JSONObject().apply { put("name", "urn:x-cast:com.google.cast.tp.connection") })
+                        put(JSONObject().apply { put("name", "urn:x-cast:com.google.cast.tp.heartbeat") })
                     }
-                    applications.put(app)
+                    put("namespaces", nsArray)
                 }
+                applications.put(app)
                 put("applications", applications)
                 put("userEq", JSONObject())
             }

@@ -47,6 +47,13 @@ data class CastMessage(
     }
 
     companion object {
+        fun buildAuthResponse(signature: ByteArray, certDer: ByteArray): ByteArray {
+            val bos = ByteArrayOutputStream()
+            writeBytes(bos, 1, signature)
+            writeBytes(bos, 2, certDer)
+            return bos.toByteArray()
+        }
+
         fun parseFrom(data: ByteArray): CastMessage {
             val stream = ByteArrayInputStream(data)
             var protocolVersion = 0
@@ -100,7 +107,7 @@ data class CastMessage(
             writeBytes(out, fieldNumber, bytes)
         }
 
-        private fun writeBytes(out: ByteArrayOutputStream, fieldNumber: Int, bytes: ByteArray) {
+        fun writeBytes(out: ByteArrayOutputStream, fieldNumber: Int, bytes: ByteArray) {
             writeVarint(out, (fieldNumber shl 3) or 2)
             writeVarint(out, bytes.size)
             out.write(bytes)

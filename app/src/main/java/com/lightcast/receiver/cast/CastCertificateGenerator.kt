@@ -6,17 +6,21 @@ import java.math.BigInteger
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.PrivateKey
 import java.security.SecureRandom
 import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
-import java.util.Date
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 
 object CastCertificateGenerator {
 
     private var cachedSslContext: SSLContext? = null
+    var privateKey: PrivateKey? = null
+        private set
+    var certificateDer: ByteArray? = null
+        private set
 
     @Synchronized
     fun getSSLContext(): SSLContext {
@@ -25,8 +29,10 @@ object CastCertificateGenerator {
         val keyPairGen = KeyPairGenerator.getInstance("RSA")
         keyPairGen.initialize(2048, SecureRandom())
         val keyPair = keyPairGen.generateKeyPair()
+        privateKey = keyPair.private
 
-        val cert = generateSelfSignedCertificate(keyPair)
+        val (cert, der) = generateSelfSignedCertificateWithDer(keyPair)
+        certificateDer = der
 
         val keyStore = KeyStore.getInstance(KeyStore.getDefaultType())
         keyStore.load(null, null)
@@ -43,7 +49,7 @@ object CastCertificateGenerator {
         return sslContext
     }
 
-    private fun generateSelfSignedCertificate(keyPair: KeyPair): X509Certificate {
+    private fun generateSelfSignedCertificateWithDer(keyPair: KeyPair): Pair<X509Certificate, ByteArray> {
         val serial = BigInteger.valueOf(System.currentTimeMillis())
         val notBefore = "240101000000Z".toByteArray(Charsets.US_ASCII)
         val notAfter = "490101000000Z".toByteArray(Charsets.US_ASCII)
@@ -91,7 +97,8 @@ object CastCertificateGenerator {
         )
 
         val cf = CertificateFactory.getInstance("X.509")
-        return cf.generateCertificate(ByteArrayInputStream(certDer)) as X509Certificate
+        val cert = cf.generateCertificate(ByteArrayInputStream(certDer)) as X509Certificate
+        return Pair(cert, certDer)
     }
 
     private fun derSequence(vararg elements: ByteArray): ByteArray {

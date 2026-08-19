@@ -12,6 +12,7 @@ import java.security.Signature
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import javax.net.ssl.SSLException
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
 
@@ -79,13 +80,36 @@ class CastV2Server(
         var clientSession: ClientSession? = null
         try {
             val sslSocket = socket as? SSLSocket
+            val remote = "${socket.inetAddress.hostAddress}:${socket.port}"
+
+            Log.d(
+                "CastV2Server",
+                "TCP ACCEPTED from $remote socketClass=${socket.javaClass.simpleName}"
+            )
 
             if (sslSocket != null) {
-                sslSocket.startHandshake()
+                Log.d(
+                    "CastV2Server",
+                    "TLS HANDSHAKE START from $remote " +
+                        "enabledProtocols=${sslSocket.enabledProtocols.joinToString()} " +
+                        "enabledCiphers=${sslSocket.enabledCipherSuites.size}"
+                )
+
+                try {
+                    sslSocket.startHandshake()
+                } catch (e: SSLException) {
+                    Log.e(
+                        "CastV2Server",
+                        "TLS HANDSHAKE FAILED from $remote " +
+                            "${e.javaClass.simpleName}: ${e.message}",
+                        e
+                    )
+                    return
+                }
 
                 Log.d(
                     "CastV2Server",
-                    "TLS CONNECTED from ${socket.inetAddress.hostAddress}:${socket.port} " +
+                    "TLS CONNECTED from $remote " +
                         "protocol=${sslSocket.session.protocol} " +
                         "cipher=${sslSocket.session.cipherSuite}"
                 )
@@ -107,7 +131,11 @@ class CastV2Server(
                 handleCastMessage(castMsg, clientSession)
             }
         } catch (e: IOException) {
-            Log.d("CastV2Server", "Client disconnected: ${e.message}")
+            Log.d(
+                "CastV2Server",
+                "Client disconnected from ${socket.inetAddress.hostAddress}:${socket.port} " +
+                    "${e.javaClass.simpleName}: ${e.message}"
+            )
         } catch (e: Exception) {
             Log.e("CastV2Server", "Client error: ${e.message}")
         } finally {

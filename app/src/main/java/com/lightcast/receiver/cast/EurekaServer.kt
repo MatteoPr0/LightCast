@@ -11,8 +11,13 @@ import java.net.NetworkInterface
 class EurekaServer(
     val port: Int = 8008,
     private val deviceName: String,
-    private val context: Context
+    private val context: Context,
+    private val listener: EurekaListener? = null
 ) : NanoHTTPD(port) {
+
+    interface EurekaListener {
+        fun onDialLaunch(appName: String, data: String)
+    }
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
@@ -35,6 +40,7 @@ class EurekaServer(
                         put("closed_caption", JSONObject())
                         put("connected", true)
                         put("ethernet_connected", false)
+                        put("has_update", false)
                         put("hotspot_bssid", "fa:8f:ca:75:68:de")
                         put("ip_address", localIp)
                         put("locale", "it-IT")
@@ -53,8 +59,11 @@ class EurekaServer(
                         })
                         put("noise_level", -90)
                         put("opt_in", JSONObject().apply {
+                            put("audio_hdr", false)
+                            put("audio_surround_mode", 0)
                             put("crash", false)
-                            put("opencast", false)
+                            put("device_analytics", false)
+                            put("opencast", true)
                             put("stats", false)
                         })
                         put("public_key", "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAz")
@@ -121,14 +130,19 @@ class EurekaServer(
 <service xmlns="urn:dial-multicast:org:service:dial:1" dialVer="1.7">
   <name>$appName</name>
   <options allowStop="true"/>
-  <state>running</state>
-  <link rel="run" href="run"/>
+  <state>stopped</state>
   <additionalData>
     <cast:capabilities xmlns:cast="urn:google:cast">video_out,audio_out</cast:capabilities>
   </additionalData>
 </service>"""
                         newFixedLengthResponse(Response.Status.OK, "application/xml", appXml)
                     } else if (method == Method.POST) {
+                        val files = HashMap<String, String>()
+                        session.parseBody(files)
+                        val postData = files["postData"] ?: ""
+                        Log.d("EurekaServer", "DIAL launch for $appName with data: $postData")
+                        listener?.onDialLaunch(appName, postData)
+
                         val res = newFixedLengthResponse(Response.Status.CREATED, "text/plain", "")
                         res.addHeader("Location", "http://$localIp:$port/apps/$appName/run")
                         res

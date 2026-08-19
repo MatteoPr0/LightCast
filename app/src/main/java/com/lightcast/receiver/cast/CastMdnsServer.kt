@@ -168,6 +168,8 @@ class CastMdnsServer(
         dos.writeInt(120)
         val txtAttrs = listOf(
             "id=f3b4c10a4a821e90b8f041235b849201",
+            "cd=B6204C63ECA2F6E3B87A84B0F77DE0F4",
+            "rm=",
             "ve=05",
             "md=Chromecast",
             "ic=/setup/icon.png",
@@ -176,8 +178,7 @@ class CastMdnsServer(
             "st=0",
             "rs=",
             "bs=FA8FCA7568DE",
-            "nf=1",
-            "rm="
+            "nf=1"
         )
         val txtData = ByteArrayOutputStream()
         for (attr in txtAttrs) {

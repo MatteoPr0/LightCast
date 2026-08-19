@@ -73,10 +73,6 @@ class MainActivity : AppCompatActivity(),
             setupOptimizedWebView()
             setupExoPlayer()
 
-            try {
-                startService(Intent(this, CastDiscoveryService::class.java))
-            } catch (_: Exception) {}
-
             val ip = getLocalIpAddress()
             val encodedName = URLEncoder.encode(deviceName, "UTF-8")
             val targetUrl = "file:///android_asset/receiver.html?ip=$ip&port=$httpPort&name=$encodedName"
@@ -106,7 +102,23 @@ class MainActivity : AppCompatActivity(),
 
     private fun startEurekaServer(deviceName: String) {
         try {
-            eurekaServer = EurekaServer(eurekaPort, deviceName, this)
+            eurekaServer = EurekaServer(eurekaPort, deviceName, this, object : EurekaServer.EurekaListener {
+                override fun onDialLaunch(appName: String, data: String) {
+                    runOnUiThread {
+                        Log.d("MainActivity", "DIAL launch request for $appName: $data")
+                        if (appName.equals("YouTube", ignoreCase = true)) {
+                            val videoId = if (data.contains("v=")) {
+                                data.substringAfter("v=").substringBefore('&').substringBefore(' ')
+                            } else {
+                                data.trim()
+                            }
+                            if (videoId.isNotEmpty()) {
+                                onCastMedia("https://www.youtube.com/embed/$videoId?autoplay=1", "YouTube: $videoId", "video/mp4")
+                            }
+                        }
+                    }
+                }
+            })
             eurekaServer?.start()
             Log.d("MainActivity", "LightCast Eureka Server running on port $eurekaPort")
         } catch (e: Exception) {
